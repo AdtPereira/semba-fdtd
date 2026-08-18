@@ -1,77 +1,59 @@
 module mtln_testingTools_mod
     use iso_c_binding
-    use mtl_mod, only: mtl_t
-    use network_mod
-    use mtln_types_mod, only: terminal_node_t, termination_t
+    use mtl_m, only: mtl_t
+    use network_m
+    use mtln_types_m, only: terminal_node_t, termination_t
     implicit none
     
     character(len=*, kind=c_char), parameter :: PATH_TO_TEST_DATA = c_char_'./testData/'
+    character(len=*), parameter :: MTL_TYPE_SHIELDED = "shielded"
+    character(len=*), parameter :: MTL_TYPE_UNSHIELDED = "unshielded"
+
+    interface checkNear
+        module procedure checkNear_real
+        module procedure checkNear_dp
+    end interface checkNear
 
 contains
     
     
-
-    type(network_t) function buildNetwork(name, r1, c1, r2, c2, target_v_nodes, target_i_nodes) result(res)
-        character(len=*), intent(in) :: name, r1, c1, r2, c2
-        character(100), dimension(:), allocatable :: description
-        type(nw_node_t), dimension(3) :: nodes
-        type(nw_node_t) :: node_int, node_out, node_in
-        real, dimension(:),intent(in), target :: target_v_nodes, target_i_nodes
-
-        ! node_int%values%v => target_v_nodes(1)
-        ! node_int%values%i => target_i_nodes(1)
-        ! node_in%values%v  => target_v_nodes(2)
-        ! node_in%values%i  => target_i_nodes(2)
-        ! node_out%values%v => target_v_nodes(3)
-        ! node_out%values%i => target_i_nodes(3)
-
-        ! node_int%name = name//"_int"
-        ! node_int%values%v = 0.0
-        ! node_int%values%i = 0.0
-        ! node_int%line_c_per_meter = 0.0
-    
-        ! node_in%name = name//"_in"
-        ! node_in%values%v = 0.0
-        ! node_in%values%i = 0.0
-        ! node_in%line_c_per_meter = 0.0
-    
-        ! node_out%name = name//"_out"
-        ! node_out%values%v = 0.0
-        ! node_out%values%i = 0.0
-        ! node_out%line_c_per_meter = 0.0
-
-        ! nodes = [node_in, node_int, node_out]
-        ! allocate(description(0))
-        ! description = [description, trim("R_"//name//"_1 "//name//"_int "//name//"_in "//r1)]
-        ! description = [description, trim("V_"//name//"_1 "//name//"_in 0 dc 0 PULSE (0 5 1u 1u 1u 1 1)")]
-        ! description = [description, trim("R_"//name//"_2 "//name//"_out "//name//"_int "//r2)]
-        ! description = [description, trim("C_"//name//"_1 "//name//"_int 0 "//c1)]
-        ! description = [description, trim("C_"//name//"_2 "//name//"_out 0 "//c2)]
-        ! res = networkCtor(nodes, description)
-    
-    end function    
-
-    type(mtl_t) function buildLineWithNConductors(n,name, parent_name, conductor_in_parent, dt) result(res)
+    function buildLineWithNConductors(n,name, parent_name, conductor_in_parent, dt, type) result(res)
     
         integer, intent(in) :: n
         character(len=*), intent(in) :: name
-        real, intent(in), optional :: dt
+        real(kind=rkind_tiempo), intent(in), optional :: dt
         character(len=*), intent(in), optional :: parent_name
         integer, intent(in), optional :: conductor_in_parent
-        real, allocatable, dimension(:,:) :: lpul, cpul, rpul, gpul
-        real, dimension(5) :: step_size = [20.0, 20.0, 20.0, 20.0, 20.0]
-        type(external_field_segment_t), dimension(5) :: external_field_segments
+        character(len=*), intent(in) :: type
+        type(mtl_t) :: res
+        
+        real(kind=rkind), allocatable, dimension(:,:) :: lpul, cpul, rpul, gpul
+        real(kind=rkind), dimension(5) :: step_size = [20.0_rkind, 20.0_rkind, 20.0_rkind, 20.0_rkind, 20.0_rkind]
+        type(segment_t), allocatable, dimension(:) :: segments
         integer :: i,j
+        
+        real(kind=RKIND_TIEMPO) :: time_step
+        integer :: conductor
+        character(len=:), allocatable :: parent
 
-        allocate(lpul(n,n), source = 0.0)
-        allocate(cpul(n,n), source = 0.0)
-        allocate(gpul(n,n), source = 0.0)
-        allocate(rpul(n,n), source = 0.0)
+        type(transfer_impedance_per_meter_t):: Zt
+        type(multipolar_expansion_t), dimension(:), allocatable:: mE
 
+        Zt%inductive_term = 0.0
+        Zt%resistive_term = 0.0
+        allocate(Zt%poles(0), Zt%residues(0))
+        allocate(mE(0))
+
+        allocate(lpul(n,n), source = 0.0_rkind)
+        allocate(cpul(n,n), source = 0.0_rkind)
+        allocate(gpul(n,n), source = 0.0_rkind)
+        allocate(rpul(n,n), source = 0.0_rkind)
+        allocate(segments(5))
         do i = 1, 5
-            external_field_segments(i)%position =(/i,1,1/)            
-            external_field_segments(i)%direction = DIRECTION_X_POS  
-            external_field_segments(i)%field => null()
+            segments(i)%x = 1
+            segments(i)%y = i
+            segments(i)%z = i
+            segments(i)%orientation = DIRECTION_X_POS  
         end do
 
         do i = 1, n
@@ -87,29 +69,36 @@ contains
                 end if
             end do
         end do
-        if (present(dt) .and. .not.present(parent_name)) then
-            res = mtl_t(lpul, cpul, rpul, gpul, step_size, name, dt = dt, &
-                        external_field_segments = external_field_segments)
-        else if (.not.present(dt) .and. present(parent_name) ) then
-            res = mtl_t(lpul, cpul, rpul, gpul, step_size, name, & 
-                        parent_name= parent_name, &
-                        conductor_in_parent=conductor_in_parent, &
-                        external_field_segments = external_field_segments)
-        else if (present(dt) .and. present(parent_name) ) then
-            res = mtl_t(lpul, cpul, rpul, gpul, step_size, name, & 
-                        parent_name= parent_name, &
-                        conductor_in_parent=conductor_in_parent, &
-                        dt = dt, external_field_segments = external_field_segments)
+        if (.not. present(dt)) then 
+            time_step = 1e-12_RKIND_TIEMPO
         else 
-            res = mtl_t(lpul, cpul, rpul, gpul, step_size, name, &
-                        external_field_segments = external_field_segments)
+            time_step = dt
         end if
+        
+        if (type == MTL_TYPE_SHIELDED) then 
+            if (.not. present(parent_name)) then 
+                parent = "p" 
+            else
+                parent = parent_name
+            end if
+            if (.not. present(conductor_in_parent)) then 
+                conductor = -1
+            else 
+                conductor = conductor_in_parent
+            end if
+            res = mtl_shielded(lpul, cpul, rpul, gpul, step_size, name, segments, time_step, parent, conductor, Zt)
+        else if (type == MTL_TYPE_UNSHIELDED) then 
+            res = mtl_unshielded(lpul, cpul, rpul, gpul, step_size, name, segments, time_step, mE, radius = 0.0_rkind)
+        else
+            write(*,*) 'Unrecognized line type'
+        end if
+
     end function    
 
     subroutine comparePULMatrices(error_cnt, m_line, m_input)
         integer, intent(inout) :: error_cnt
-        real, intent(in), dimension(:,:,:) :: m_line
-        real, intent(in), dimension(:,:) :: m_input
+        real(kind=rkind), intent(in), dimension(:,:,:) :: m_line
+        real(kind=rkind), intent(in), dimension(:,:) :: m_input
         integer :: i
 
         if (size(m_input, dim = 1) .ne. size(m_input, dim = 2)) then
@@ -127,8 +116,8 @@ contains
 
     subroutine comparePULMatricesIH(error_cnt, m_line, m_input)
         integer, intent(inout) :: error_cnt
-        real, intent(in), dimension(:,:,:) :: m_line
-        real, intent(in), dimension(:,:,:) :: m_input
+        real(kind=rkind), intent(in), dimension(:,:,:) :: m_line
+        real(kind=rkind), intent(in), dimension(:,:,:) :: m_input
         integer :: i
 
         if (size(m_input, dim = 2) .ne. size(m_input, dim = 2)) then
@@ -147,24 +136,9 @@ contains
         
     end subroutine 
 
-    function checkNear_dp(target, number, rel_tol) result(is_near)
-        double precision, intent(in) :: target, number
-        real :: rel_tol
-        logical :: is_near
-        double precision :: abs_diff
-
-        abs_diff = abs(target-number)
-        if (abs_diff == 0.0) then
-            is_near = .true.
-        else 
-            is_near = abs(target-number)/target < rel_tol
-        endif
-
-    end function 
-
-    function checkNear(target, number, rel_tol) result(is_near)
-        real, intent(in) :: target, number
-        real :: rel_tol
+    function checkNear_real(target, number, rel_tol) result(is_near)
+        real(kind=rkind), intent(in) :: target, number
+        real(kind=rkind) :: rel_tol
         logical :: is_near
         real :: abs_diff
 
@@ -177,11 +151,26 @@ contains
 
     end function 
 
-    function checkNear_real8(target, number, rel_tol) result(is_near)
-        real(kind=8), intent(in) :: target, number
-        real(kind=8) :: rel_tol
+    function checkNear_time(target, number, rel_tol) result(is_near)
+        real(kind=rkind_tiempo), intent(in) :: target, number
+        real(kind=rkind_tiempo) :: rel_tol
         logical :: is_near
-        real(kind=8) :: abs_diff
+        real :: abs_diff
+
+        abs_diff = abs(target-number)
+        if (abs_diff == 0.0) then
+            is_near = .true.
+        else 
+            is_near = abs(target-number)/target < rel_tol
+        endif
+
+    end function 
+
+    function checkNear_dp(target, number, rel_tol) result(is_near)
+        double precision, intent(in) :: target, number
+        real :: rel_tol
+        logical :: is_near
+        double precision :: abs_diff
 
         abs_diff = abs(target-number)
         if (abs_diff == 0.0) then

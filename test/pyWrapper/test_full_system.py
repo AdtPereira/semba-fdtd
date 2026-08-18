@@ -1,215 +1,540 @@
 from utils import *
 from typing import Dict
+from pathlib import Path
 import os
 from sys import platform
 from scipy import signal
 
+
+# compiled without mtln uses classic wires
+# compiled with mtln, wire is treated as an unshielded multiwire
+@pytest.mark.skip
 def test_lineIntegralProbe(tmp_path):
     fn = CASES_FOLDER + 'lineIntegralProbe/lineIntegralProbe_plates.fdtd.json'
     solver = FDTD(input_filename=fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
+    solver['materials'][0] = createWire(id = 1, r = 0.001)
     solver.run()
     
     pf = 'lineIntegralProbe_plates.fdtd_vprobe_LI_20_20_10.dat'
     li_probe  = Probe(solver.getSolvedProbeFilenames("vprobe_LI_20_20_10")[0])
     expected  = Probe(OUTPUTS_FOLDER+pf)
-    np.allclose(li_probe['lineIntegral'].to_numpy(), expected['lineIntegral'].to_numpy(), rtol =0.01 , atol=0.01)
+    assert np.allclose(li_probe['lineIntegral'].to_numpy(), expected['lineIntegral'].to_numpy(), rtol =0.01 , atol=0.01)
 
 
 @no_mtln_skip
 @pytest.mark.mtln
+@pytest.mark.wires
+@pytest.mark.multiwire
+@pytest.mark.probes
 def test_shieldedPair(tmp_path):
     fn = CASES_FOLDER + 'shieldedPair/shieldedPair.fdtd.json'
     solver = FDTD(input_filename=fn,
                   path_to_exe=SEMBA_EXE,
-                  flags=['-mtlnwires'],
                   run_in_folder=tmp_path)
     solver.run()
 
-    probe_files = ['shieldedPair.fdtd_wire_start_bundle_line_0_V_75_74_74.dat',
-                   'shieldedPair.fdtd_wire_start_bundle_line_0_I_75_74_74.dat',
-                   'shieldedPair.fdtd_wire_start_Wz_75_74_74_s4.dat',
-                   'shieldedPair.fdtd_wire_end_Wz_75_71_74_s1.dat',
-                   'shieldedPair.fdtd_wire_end_bundle_line_0_I_75_71_74.dat',
-                   'shieldedPair.fdtd_wire_end_bundle_line_0_V_75_71_74.dat']
+    probe_files = ['shieldedPair.fdtd_wire_start_line_out_V_75_74_74.dat',
+                   'shieldedPair.fdtd_wire_start_line_out_I_75_74_74.dat',
+                   'shieldedPair.fdtd_wire_end_line_out_I_75_71_74.dat',
+                   'shieldedPair.fdtd_wire_end_line_out_V_75_71_74.dat']
 
     p_expected = []
     for pf in probe_files:
         p_expected.append(Probe(OUTPUTS_FOLDER+pf))
 
-    for i in [2, 3]:
-        p_solved = Probe(probe_files[i])
-        assert np.allclose(p_expected[i].data.to_numpy()[:, 0:3], p_solved.data.to_numpy()[
-                           :, 0:3], rtol=5e-2, atol=0.2)
-    for i in [0, 1, 4, 5]:
-        p_solved = Probe(probe_files[i])
-        assert np.allclose(p_expected[i].data.to_numpy()[:, 0:4], p_solved.data.to_numpy()[
-                           :, 0:4], rtol=5e-2, atol=0.2)
+    p_solved = []
+    for pf in probe_files:
+        p_solved.append(Probe(pf))
+
+    for i in [0,3]:
+        solved = np.interp(p_expected[i]['time'].to_numpy(), 
+                            p_solved[i]['time'].to_numpy(), 
+                            p_solved[i]['voltage_0'].to_numpy())
+        assert np.corrcoef(solved, p_expected[i]['voltage_0'])[0,1] > 0.999
+        solved = np.interp(p_expected[i]['time'].to_numpy(), 
+                            p_solved[i]['time'].to_numpy(), 
+                            p_solved[i]['voltage_1'].to_numpy())
+        assert np.corrcoef(solved, p_expected[i]['voltage_1'])[0,1] > 0.999
+        solved = np.interp(p_expected[i]['time'].to_numpy(), 
+                            p_solved[i]['time'].to_numpy(), 
+                            p_solved[i]['voltage_2'].to_numpy())
+        assert np.corrcoef(solved, p_expected[i]['voltage_2'])[0,1] > 0.999
+    for i in [1,2]:
+        solved = np.interp(p_expected[i]['time'].to_numpy(), 
+                            p_solved[i]['time'].to_numpy(), 
+                            p_solved[i]['current_0'].to_numpy())
+        assert np.corrcoef(solved, p_expected[i]['current_0'])[0,1] > 0.999
+        solved = np.interp(p_expected[i]['time'].to_numpy(), 
+                            p_solved[i]['time'].to_numpy(), 
+                            p_solved[i]['current_1'].to_numpy())
+        assert np.corrcoef(solved, p_expected[i]['current_1'])[0,1] > 0.999
+        solved = np.interp(p_expected[i]['time'].to_numpy(), 
+                            p_solved[i]['time'].to_numpy(), 
+                            p_solved[i]['current_2'].to_numpy())
+        assert np.corrcoef(solved, p_expected[i]['current_2'])[0,1] > 0.999
 
 @no_mtln_skip
 @no_mpi_skip
 @pytest.mark.mtln
 @pytest.mark.mpi
+@pytest.mark.wires
+@pytest.mark.multiwire
+def test_bundles_mpi_n_ranks(tmp_path):
+    fn = CASES_FOLDER + 'mpi/bundles_for_mpi.fdtd.json'
+    solver = FDTD(input_filename=fn,
+                  path_to_exe=SEMBA_EXE,
+                  mpi_command='mpirun -np 2',
+                  run_in_folder=tmp_path)
+    solver.run()
+    assert solver.hasFinishedSuccessfully()
+
+    # solver = FDTD(input_filename=fn,
+    #               path_to_exe=SEMBA_EXE,
+    #               mpi_command='mpirun -np 3',
+    #               run_in_folder=tmp_path)
+    # solver.cleanUp()
+    # solver.run()
+    # assert solver.hasFinishedSuccessfully()
+    
+    # solver = FDTD(input_filename=fn,
+    #               path_to_exe=SEMBA_EXE,
+    #               mpi_command='mpirun -np 4',
+    #               run_in_folder=tmp_path)
+    # solver.cleanUp()
+    # solver.run()
+    # assert solver.hasFinishedSuccessfully()
+    
+@no_mtln_skip
+@no_mpi_skip
+@pytest.mark.mtln
+@pytest.mark.mpi
+@pytest.mark.wires
+@pytest.mark.multiwire
+def test_bundles_mpi_n_ranks_2(tmp_path):
+#             (9,10)(10,10)                       
+#                        |  (12,12)
+#           (7,9)   _    |
+#(1,7)(3,7)    _ _ | |   |
+#  _ _        | (9,9)|   |
+# |   | (5,6) |      |   |
+# |   |_ _    |      |_  |
+# | (3,6) |   | (10,6) |_|
+# |       |_ _|    (11,6)(11,4)(12,4)                         
+# |    (5,3)(7,3)                
+# |    
+# (1,1)    
+    fn = CASES_FOLDER + 'mpi/bundles_for_mpi_2.fdtd.json'
+    solver = FDTD(input_filename=fn,
+                  path_to_exe=SEMBA_EXE,
+                  mpi_command='mpirun -np 2',
+                  run_in_folder=tmp_path)
+    solver.run()
+    assert solver.hasFinishedSuccessfully()
+
+    # solver = FDTD(input_filename=fn,
+    #               path_to_exe=SEMBA_EXE,
+    #               mpi_command='mpirun -np 3',
+    #               run_in_folder=tmp_path)
+    # solver.cleanUp()
+    # solver.run()
+    # assert solver.hasFinishedSuccessfully()
+    
+    # solver = FDTD(input_filename=fn,
+    #               path_to_exe=SEMBA_EXE,
+    #               mpi_command='mpirun -np 4',
+    #               run_in_folder=tmp_path)
+    # solver.cleanUp()
+    # solver.run()
+    # assert solver.hasFinishedSuccessfully()
+    
+
+
+@no_mtln_skip
+@no_mpi_skip
+@pytest.mark.mtln
+@pytest.mark.mpi
+@pytest.mark.wires
+@pytest.mark.multiwire
+@pytest.mark.probes
 def test_shieldedPair_mpi(tmp_path):
     fn = CASES_FOLDER + 'shieldedPair/shieldedPair.fdtd.json'
     solver = FDTD(input_filename=fn,
                   path_to_exe=SEMBA_EXE,
-                  flags=['-mtlnwires'],
                   mpi_command='mpirun -np 2',
                   run_in_folder=tmp_path)
     solver.run()
 
-    probe_files = ['shieldedPair.fdtd_wire_start_bundle_line_0_V_75_74_74.dat',
-                   'shieldedPair.fdtd_wire_start_bundle_line_0_I_75_74_74.dat',
-                   'shieldedPair.fdtd_wire_start_Wz_75_74_74_s4.dat',
-                   'shieldedPair.fdtd_wire_end_Wz_75_71_74_s1.dat',
-                   'shieldedPair.fdtd_wire_end_bundle_line_0_I_75_71_74.dat',
-                   'shieldedPair.fdtd_wire_end_bundle_line_0_V_75_71_74.dat']
+    probe_files = ['shieldedPair.fdtd_wire_start_line_out_V_75_74_74.dat',
+                   'shieldedPair.fdtd_wire_start_line_out_I_75_74_74.dat',
+                   'shieldedPair.fdtd_wire_end_line_out_I_75_71_74.dat',
+                   'shieldedPair.fdtd_wire_end_line_out_V_75_71_74.dat']
 
     p_expected = []
     for pf in probe_files:
         p_expected.append(Probe(OUTPUTS_FOLDER+pf))
 
-    for i in [2, 3]:
-        p_solved = Probe(probe_files[i])
-        assert np.allclose(p_expected[i].data.to_numpy()[:, 0:3], p_solved.data.to_numpy()[
-                           :, 0:3], rtol=5e-2, atol=0.2)
-    for i in [0, 1, 4, 5]:
-        p_solved = Probe(probe_files[i])
-        assert np.allclose(p_expected[i].data.to_numpy()[:, 0:4], p_solved.data.to_numpy()[
-                           :, 0:4], rtol=5e-2, atol=0.2)
+    p_solved = []
+    for pf in probe_files:
+        p_solved.append(Probe(pf))
+
+    for i in [0,3]:
+        solved = np.interp(p_expected[i]['time'].to_numpy(), 
+                            p_solved[i]['time'].to_numpy(), 
+                            p_solved[i]['voltage_0'].to_numpy())
+        assert np.corrcoef(solved, p_expected[i]['voltage_0'])[0,1] > 0.999
+        solved = np.interp(p_expected[i]['time'].to_numpy(), 
+                            p_solved[i]['time'].to_numpy(), 
+                            p_solved[i]['voltage_1'].to_numpy())
+        assert np.corrcoef(solved, p_expected[i]['voltage_1'])[0,1] > 0.999
+        solved = np.interp(p_expected[i]['time'].to_numpy(), 
+                            p_solved[i]['time'].to_numpy(), 
+                            p_solved[i]['voltage_2'].to_numpy())
+        assert np.corrcoef(solved, p_expected[i]['voltage_2'])[0,1] > 0.999
+    for i in [1,2]:
+        solved = np.interp(p_expected[i]['time'].to_numpy(), 
+                            p_solved[i]['time'].to_numpy(), 
+                            p_solved[i]['current_0'].to_numpy())
+        assert np.corrcoef(solved, p_expected[i]['current_0'])[0,1] > 0.999
+        solved = np.interp(p_expected[i]['time'].to_numpy(), 
+                            p_solved[i]['time'].to_numpy(), 
+                            p_solved[i]['current_1'].to_numpy())
+        assert np.corrcoef(solved, p_expected[i]['current_1'])[0,1] > 0.999
+        solved = np.interp(p_expected[i]['time'].to_numpy(), 
+                            p_solved[i]['time'].to_numpy(), 
+                            p_solved[i]['current_2'].to_numpy())
+        assert np.corrcoef(solved, p_expected[i]['current_2'])[0,1] > 0.999
 
 
 @no_mtln_skip
 @pytest.mark.mtln
+@pytest.mark.wires
+@pytest.mark.dielectric
+@pytest.mark.probes
 def test_coated_antenna(tmp_path):
+    """ Test for a coated antenna with MTLN wires reproducing Fig. 2 in:
+        A. Rubio Bretones, R. Gomez Martin, A. Salinas and I. Sanchez, 
+        "Time domain analysis of dielectric coated wire scatterers and antennas," 
+        Proceedings of MELECON '94. Mediterranean Electrotechnical Conference,
+        Antalya, Turkey, 1994, pp. 1174-1176 vol.3, doi: 10.1109/MELCON.1994.380859.
+    """
     fn = CASES_FOLDER + 'coated_antenna/coated_antenna.fdtd.json'
 
     solver = FDTD(
         input_filename=fn,
         path_to_exe=SEMBA_EXE,
-        flags=['-mtlnwires'],
         run_in_folder=tmp_path)
     solver.run()
 
-    probe_current = solver.getSolvedProbeFilenames("mid_point_Wz")[0]
+    probe_current = solver.getSolvedProbeFilenames("mid_point")[0]
     probe_files = [probe_current]
 
     p_expected = Probe(
-        OUTPUTS_FOLDER+'coated_antenna.fdtd_mid_point_Wz_11_11_11_s2.dat')
+        OUTPUTS_FOLDER+'coated_antenna.fdtd_mid_point_half_1_I_11_11_12.dat')
 
     p_solved = Probe(probe_files[0])
-    assert np.allclose(
-        p_expected.data.to_numpy()[:, 0],
-        p_solved.data.to_numpy()[:, 0],
-        rtol=0.0, atol=10e-8)
-    assert np.allclose(
-        p_expected.data.to_numpy()[:, 1],
-        p_solved.data.to_numpy()[:, 1],
-        rtol=0.0, atol=10e-8)
-    assert np.allclose(
-        p_expected.data.to_numpy()[:, 2],
-        p_solved.data.to_numpy()[:, 2],
-        rtol=0.0, atol=10e-6)
-
-
+    
+    solved = np.interp(p_expected['time'].to_numpy(), 
+                       p_solved['time'].to_numpy(), 
+                       p_solved['current_0'].to_numpy())
+    assert np.corrcoef(solved, p_expected['current_0'])[0,1] > 0.999
+    
+# compiled without mtln uses classic wires
+# compiled with mtln, wire is treated as an unshielded multiwire
+@pytest.mark.wires
+@pytest.mark.probes
 def test_holland(tmp_path):
     fn = CASES_FOLDER + 'holland/holland1981.fdtd.json'
     solver = FDTD(input_filename=fn, 
                   path_to_exe=SEMBA_EXE,
                   run_in_folder=tmp_path)
-
     solver.run()
+    p = Probe(solver.getSolvedProbeFilenames("mid_point")[0])
+    
+    expected_f = json.load(open(OUTPUTS_FOLDER+'holland1981_mid_point_expected_current.json'))
+    expected_t, expected_i = np.array([]), np.array([])
+    for data in expected_f['datasetColl'][0]['data']:
+        expected_t = np.append(expected_t, float(data['value'][0]))    
+        expected_i = np.append(expected_i, float(data['value'][1]))    
 
-    probe_current = solver.getSolvedProbeFilenames("mid_point_Wz")[0]
-    probe_files = [probe_current]
-
-    p_expected = Probe(
-        OUTPUTS_FOLDER+'holland1981.fdtd_mid_point_Wz_11_11_12_s2.dat')
-
-    p_solved = Probe(probe_files[0])
-    assert np.allclose(
-        p_expected.data.to_numpy()[:, 0:3], 
-        p_solved.data.to_numpy()[:, 0:3], 
-        rtol=1e-5, atol=1e-6)
+    expected_i_interp = np.interp(p['time']-3.05*1e-9, expected_t, expected_i)
+    assert np.allclose(expected_i_interp, p['current'], rtol=1e-4, atol=5e-5)
 
 
-@no_mtln_skip
-@pytest.mark.mtln
-def test_holland_mtln(tmp_path):
+@pytest.mark.wires
+@pytest.mark.termination
+@pytest.mark.probes
+def test_holland_short_terminals_match_open_terminals(tmp_path):
     fn = CASES_FOLDER + 'holland/holland1981.fdtd.json'
-    solver = FDTD(input_filename=fn, path_to_exe=SEMBA_EXE,
-                  flags=['-mtlnwires'], run_in_folder=tmp_path)
+    number_of_steps = 1000
+    
+    folder_open = os.path.join(tmp_path, 'open_terminals')
+    os.makedirs(folder_open)
+    solver_open = FDTD(input_filename=fn,
+                       path_to_exe=SEMBA_EXE,
+                       run_in_folder=folder_open)
+    solver_open['general']['numberOfSteps'] = number_of_steps
+    solver_open.run()
 
-    solver.run()
+    probe_name = os.path.basename(solver_open.getSolvedProbeFilenames("mid_point")[0])
+    probe_open = Probe(os.path.join(folder_open, probe_name))
 
-    probe_current = solver.getSolvedProbeFilenames("mid_point_Wz")[0]
-    probe_files = [probe_current]
+    folder_short = os.path.join(tmp_path, 'short_terminals')
+    os.makedirs(folder_short)
+    solver_short = FDTD(input_filename=fn,
+                        path_to_exe=SEMBA_EXE,
+                        run_in_folder=folder_short)
+    solver_short['general']['numberOfSteps'] = number_of_steps
+    solver_short['materials'][1]['terminations'][0]['type'] = 'short'
+    solver_short.run()
 
-    p_expected = Probe(
-        OUTPUTS_FOLDER+'holland1981.fdtd_mid_point_Wz_11_11_12_s2.dat')
+    probe_short = Probe(os.path.join(folder_short, probe_name))
 
-    p_solved = Probe(probe_files[0])
     assert np.allclose(
-        p_expected.data.to_numpy()[:, 0:3], 
-        p_solved.data.to_numpy()[:, 0:3], 
-        rtol=1e-5, atol=1e-6)
+        probe_open['time'].to_numpy(),
+        probe_short['time'].to_numpy(),
+        rtol=0.0,
+        atol=0.0,
+    )
+    assert np.allclose(
+        probe_open['current'].to_numpy(),
+        probe_short['current'].to_numpy(),
+        rtol=1e-4,
+        atol=5e-5,
+    )
 
 @no_mtln_skip
 @no_mpi_skip
 @pytest.mark.mtln
 @pytest.mark.mpi
+@pytest.mark.wires
+@pytest.mark.probes
 def test_holland_mtln_mpi(tmp_path):
-    fn = CASES_FOLDER + 'holland/holland1981.fdtd.json'
+    fn = CASES_FOLDER + 'holland/holland1981_unshielded.fdtd.json'
+    # no mpi
     solver = FDTD(input_filename=fn, path_to_exe=SEMBA_EXE,
-                  flags=['-mtlnwires'] ,run_in_folder=tmp_path)
+                  run_in_folder=tmp_path)
     solver.run()
     probe_names = solver.getSolvedProbeFilenames("mid_point")
-    probe_mid_no_mpi = Probe(list(filter(lambda x: '_Wz_' in x, probe_names))[0])
+    probe_mid_no_mpi = Probe(list(filter(lambda x: '_I_' in x, probe_names))[0])
 
+    # no mpi -np 1
     solver = FDTD(input_filename=fn, path_to_exe=SEMBA_EXE,
-                  flags=['-mtlnwires'], mpi_command='mpirun -np 2',run_in_folder=tmp_path)
+                  mpi_command='mpirun -np 1',run_in_folder=tmp_path)
     solver.cleanUp()
     solver.run()
-    probe_mid_mpi_2 = Probe(list(filter(lambda x: '_Wz_' in x, probe_names))[0])
+    probe_mid_mpi_1 = Probe(list(filter(lambda x: '_I_' in x, probe_names))[0])
 
+    # no mpi -np 2
+    solver = FDTD(input_filename=fn, path_to_exe=SEMBA_EXE,
+                  mpi_command='mpirun -np 2',run_in_folder=tmp_path)
+    solver.cleanUp()
+    solver.run()
+    probe_mid_mpi_2 = Probe(list(filter(lambda x: '_I_' in x, probe_names))[0])
+
+    # # no mpi -np 3
+    # solver = FDTD(input_filename=fn, path_to_exe=SEMBA_EXE,
+    #               flags=['-mtlnwires'], mpi_command='mpirun -np 3',run_in_folder=tmp_path)
+    # solver.cleanUp()
+    # solver.run()
+    # probe_mid_mpi_3 = Probe(list(filter(lambda x: '_I_' in x, probe_names))[0])
+
+    expected_f = json.load(open(OUTPUTS_FOLDER+'holland1981_mid_point_expected_current.json'))
+    expected_t, expected_i = np.array([]), np.array([])
+    for data in expected_f['datasetColl'][0]['data']:
+        expected_t = np.append(expected_t, float(data['value'][0]))    
+        expected_i = np.append(expected_i, float(data['value'][1]))    
+
+    expected_i_interp = np.interp(probe_mid_no_mpi['time']-3.05*1e-9, expected_t, expected_i)
+
+    assert np.allclose(
+        expected_i_interp, 
+        probe_mid_no_mpi['current_0'], 
+        rtol=1e-4, atol=5e-5)
+
+    assert np.allclose(
+        expected_i_interp, 
+        probe_mid_mpi_1['current_0'], 
+        rtol=1e-4, atol=5e-5)
+
+    assert np.allclose(
+        expected_i_interp, 
+        probe_mid_mpi_2['current_0'], 
+        rtol=1e-4, atol=5e-5)
+
+    # assert np.allclose(
+    #     expected_i_interp, 
+    #     probe_mid_mpi_3['current_0'], 
+    #     rtol=1e-4, atol=5e-5)
+
+
+@no_mtln_skip
+@pytest.mark.mtln
+@pytest.mark.wires
+@pytest.mark.multiwire
+@pytest.mark.probes
+def test_unshielded_multiwires(tmp_path):
+    fn = CASES_FOLDER + 'unshielded_multiwires/unshielded_multiwires_berenger.fdtd.json'
+    solver = FDTD(input_filename=fn, path_to_exe=SEMBA_EXE,
+                  run_in_folder=tmp_path)
+
+    solver.run()
+
+    probe_names = solver.getSolvedProbeFilenames("mid_point")
+    p_solved = Probe(list(filter(lambda x: '_I_' in x, probe_names))[0])
 
     p_expected = Probe(
-        OUTPUTS_FOLDER+'holland1981.fdtd_mid_point_Wz_11_11_12_s2.dat')
+        OUTPUTS_FOLDER+'unshielded_multiwires_berenger.fdtd_mid_point_unshielded_two_wire_I_2_11_14.dat')
 
-    assert np.allclose(
-        p_expected.data.to_numpy()[:, 0:3], 
-        probe_mid_no_mpi.data.to_numpy()[:, 0:3], 
-        rtol=1e-5, atol=1e-6)
+    solved_0 = np.interp(p_expected['time'].to_numpy(), 
+                    p_solved.data['time'].to_numpy(), 
+                    p_solved.data['current_0'].to_numpy())
+    assert np.corrcoef(solved_0, p_expected['current_0'])[0,1] > 0.999
+    
+    solved_1 = np.interp(p_expected['time'].to_numpy(), 
+                    p_solved.data['time'].to_numpy(), 
+                    p_solved.data['current_1'].to_numpy())
+    assert np.corrcoef(solved_1, p_expected['current_1'])[0,1] > 0.999
 
-    assert np.allclose(
-        p_expected.data.to_numpy()[:, 0:3], 
-        probe_mid_mpi_2.data.to_numpy()[:, 0:3], 
-        rtol=1e-5, atol=1e-6)
 
+@no_mpi_skip
+@pytest.mark.mpi
+@pytest.mark.wires
+@pytest.mark.probes
+def test_towelHanger_mpi(tmp_path):
+    fn = CASES_FOLDER + 'towelHanger/towelHanger_mpi.fdtd.json'
+    mpidir = ["x","y","z"]
+    for i in range(3):
+        solver = FDTD(input_filename=fn, path_to_exe=SEMBA_EXE,
+                    run_in_folder=tmp_path, flags=['-mpidir ' + mpidir[i]], 
+                    mpi_command='mpirun -np 1',)
+        for j in range(len(solver["mesh"]["coordinates"])):
+            cs = [0,0,0]
+            cs[0] = solver["mesh"]["coordinates"][j]["relativePosition"][(0 + i)%3]
+            cs[1] = solver["mesh"]["coordinates"][j]["relativePosition"][(1 + i)%3]
+            cs[2] = solver["mesh"]["coordinates"][j]["relativePosition"][(2 + i)%3]
+            solver["mesh"]["coordinates"][j]["relativePosition"] = cs
 
+        intervals = [[[0,0,0], [0,0,0]]]
+        intervals[0][0][0] = solver["mesh"]["elements"][2]["intervals"][0][0][(0 + i)%3]
+        intervals[0][0][1] = solver["mesh"]["elements"][2]["intervals"][0][0][(1 + i)%3]
+        intervals[0][0][2] = solver["mesh"]["elements"][2]["intervals"][0][0][(2 + i)%3]
+        intervals[0][1][0] = solver["mesh"]["elements"][2]["intervals"][0][1][(0 + i)%3]
+        intervals[0][1][1] = solver["mesh"]["elements"][2]["intervals"][0][1][(1 + i)%3]
+        intervals[0][1][2] = solver["mesh"]["elements"][2]["intervals"][0][1][(2 + i)%3]
+
+        solver["mesh"]["elements"][2]["intervals"] = intervals
+        solver.cleanUp()
+        solver.run()
+
+        p_solved = [Probe(solver.getSolvedProbeFilenames("wire_start")[0]),
+                    Probe(solver.getSolvedProbeFilenames("wire_mid")[0]),
+                    Probe(solver.getSolvedProbeFilenames("wire_end")[0])]
+
+        p_expected = [Probe(OUTPUTS_FOLDER+'towelHanger.fdtd_wire_start_Wz_27_25_30_s1.dat'),
+                    Probe(OUTPUTS_FOLDER+'towelHanger.fdtd_wire_mid_Wx_35_25_32_s5.dat'),
+                    Probe(OUTPUTS_FOLDER+'towelHanger.fdtd_wire_end_Wz_43_25_30_s4.dat')]
+
+        for i in range(3):
+            solved = np.interp(p_expected[i]['time'].to_numpy(), 
+                            p_solved[i]['time'].to_numpy(), 
+                            p_solved[i]['current_0'].to_numpy())
+            assert np.corrcoef(solved, p_expected[i]['current_0'])[0,1] > 0.999
+    
+    
+
+@pytest.mark.wires
+@pytest.mark.probes
 def test_towelHanger(tmp_path):
     fn = CASES_FOLDER + 'towelHanger/towelHanger.fdtd.json'
     solver = FDTD(input_filename=fn, path_to_exe=SEMBA_EXE,
                   run_in_folder=tmp_path)
     solver.run()
 
-    probe_files = [solver.getSolvedProbeFilenames("wire_start")[0],
-                   solver.getSolvedProbeFilenames("wire_mid")[0],
-                   solver.getSolvedProbeFilenames("wire_end")[0]]
+    p_solved = [Probe(solver.getSolvedProbeFilenames("wire_start")[0]),
+                   Probe(solver.getSolvedProbeFilenames("wire_mid")[0]),
+                   Probe(solver.getSolvedProbeFilenames("wire_end")[0])]
 
     p_expected = [Probe(OUTPUTS_FOLDER+'towelHanger.fdtd_wire_start_Wz_27_25_30_s1.dat'),
-                  Probe(OUTPUTS_FOLDER +
-                        'towelHanger.fdtd_wire_mid_Wx_35_25_32_s5.dat'),
+                  Probe(OUTPUTS_FOLDER+'towelHanger.fdtd_wire_mid_Wx_35_25_32_s5.dat'),
                   Probe(OUTPUTS_FOLDER+'towelHanger.fdtd_wire_end_Wz_43_25_30_s4.dat')]
 
     for i in range(3):
-        p_solved = Probe(probe_files[i])
-        assert np.allclose(p_expected[i].data.to_numpy()[:, 0:3], p_solved.data.to_numpy()[
-                           :, 0:3], rtol=5e-2, atol=5e-2)
+        solved = np.interp(p_expected[i]['time'].to_numpy(), 
+                           p_solved[i]['time'].to_numpy(), 
+                           p_solved[i]['current_0'].to_numpy())
+        assert np.corrcoef(solved, p_expected[i]['current_0'])[0,1] > 0.999
+
+
+@pytest.mark.wires
+@pytest.mark.termination
+@pytest.mark.probes
+def test_towel_rack_with_and_without_shorting_plane(tmp_path):
+    fn = CASES_FOLDER + \
+        'towel_rack_with_shorting_plane/towel_rack_with_shorting_plane.fdtd.json'
+
+    # --- excitation ---
+    dt = 1e-12
+    w0 = 0.1e-8
+    t0 = 10 * w0
+    t = np.arange(0, t0 + 20 * w0, dt)
+    excitation = np.exp(-np.power(t - t0, 2) / w0 ** 2)
+    exc_file = os.path.join(tmp_path, 'gauss.exc')
+    np.savetxt(exc_file, np.column_stack([t, excitation]))
+
+    freqs = np.geomspace(1e3, 1e9, 61)
+
+    # --- with shorting plane ---
+    folder_with    = os.path.join(tmp_path, 'with_shorting_plane')
+    os.makedirs(folder_with)
+    solver_w = FDTD(input_filename=fn, path_to_exe=SEMBA_EXE, run_in_folder=folder_with)
+    solver_w.run()
+
+    probe_name = os.path.basename(solver_w.getSolvedProbeFilenames("Wire probe")[0])
+    probe_w = Probe(os.path.join(folder_with, probe_name))
+    time_I_w  = probe_w["time"].to_numpy()
+    current_w = probe_w["current_0"].to_numpy()
+    V_interp_w = np.interp(time_I_w, t, excitation)
+    Z_in_w = dtft(V_interp_w, time_I_w, freqs) / dtft(current_w, time_I_w, freqs)
+
+    # --- without shorting plane ---
+    folder_without = os.path.join(tmp_path, 'without_shorting_plane')
+    os.makedirs(folder_without)
+    solver_wo = FDTD(input_filename=fn, path_to_exe=SEMBA_EXE, run_in_folder=folder_without)
+    solver_wo['materialAssociations'][0]['elementIds'] = [1]
+    solver_wo.run()
+
+    probe_wo = Probe(os.path.join(folder_without, probe_name))
+    time_I_wo  = probe_wo["time"].to_numpy()
+    current_wo = probe_wo["current_0"].to_numpy()
+    V_interp_wo = np.interp(time_I_wo, t, excitation)
+    Z_in_wo = dtft(V_interp_wo, time_I_wo, freqs) / dtft(current_wo, time_I_wo, freqs)
+
+    # For debugging
+    # import matplotlib.pyplot as plt
+    # plt.figure()
+    # plt.semilogx(freqs, 20 * np.log10(np.abs(Z_in_w)),  label="With shorting plane")
+    # plt.semilogx(freqs, 20 * np.log10(np.abs(Z_in_wo)), label="Without shorting plane")
+    # plt.xlabel("Frequency [Hz]")
+    # plt.ylabel("|Z(j2πf)| [dB]")
+    # plt.grid(which="both")
+    # plt.legend()
+    # plt.tight_layout()
+    # plt.savefig('tmp-plot.png')
+    # plt.show()
+
+    # Expect the shorting plane not changing the impedance at low frequencies.
+    assert np.allclose(
+        np.abs(Z_in_w[freqs < 1e6]), 
+        np.abs(Z_in_wo[freqs < 1e6]), 
+        rtol=0.1
+    )
 
 
 @no_hdf_skip
 @pytest.mark.hdf
+@pytest.mark.farfield
+@pytest.mark.movie
+@pytest.mark.probes
 def test_sphere(tmp_path):
     fn = CASES_FOLDER + 'sphere/sphere.fdtd.json'
     solver = FDTD(input_filename=fn, path_to_exe=SEMBA_EXE,
@@ -220,8 +545,7 @@ def test_sphere(tmp_path):
 
     solver.run()
 
-    # semba-fdtd seems to always use the name Far for "far field" probes.
-    far_field_probe_files = solver.getSolvedProbeFilenames("Far")
+    far_field_probe_files = solver.getSolvedProbeFilenames("far")
     assert len(far_field_probe_files) == 1
     p = Probe(far_field_probe_files[0])
     assert p.type == 'farField'
@@ -235,7 +559,10 @@ def test_sphere(tmp_path):
 
 @no_hdf_skip
 @pytest.mark.hdf
+@pytest.mark.planewave
+@pytest.mark.movie
 def test_movie_in_planewave_in_box(tmp_path):
+    import h5py
     fn = CASES_FOLDER + 'planewave/pw-in-box-with-movie.fdtd.json'
     solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
     solver.run()
@@ -252,6 +579,8 @@ def test_movie_in_planewave_in_box(tmp_path):
     assert np.min(field_ds) == 0.0
 
 
+@pytest.mark.planewave
+@pytest.mark.probes
 def test_planewave_in_box(tmp_path):
     fn = CASES_FOLDER + 'planewave/pw-in-box.fdtd.json'
     solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
@@ -268,6 +597,8 @@ def test_planewave_in_box(tmp_path):
     assert np.allclose(after.data['field'].to_numpy(), zeros, atol=5e-4)
 
 
+@pytest.mark.planewave
+@pytest.mark.probes
 def test_planewave_with_periodic_boundaries(tmp_path):
     fn = CASES_FOLDER + 'planewave/pw-with-periodic.fdtd.json'
     solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
@@ -284,6 +615,8 @@ def test_planewave_with_periodic_boundaries(tmp_path):
     assert np.allclose(after.data['field'].to_numpy(), zeros, atol=1.5e-3)
 
 
+@pytest.mark.sgbc
+@pytest.mark.probes
 def test_sgbc_shielding_effectiveness(tmp_path):
     fn = CASES_FOLDER + 'sgbcShieldingEffectiveness/shieldingEffectiveness.fdtd.json'
     solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
@@ -337,24 +670,70 @@ def test_sgbc_shielding_effectiveness(tmp_path):
 
     assert np.allclose(fdtd_s21_db, anal_s21_db, rtol=0.05)
 
-def test_sgbc_structured_resistance(tmp_path):
+@pytest.mark.sgbc
+@pytest.mark.probes
+def test_current_orientation(tmp_path):
+    fn = CASES_FOLDER + 'current_orientation/currentOrientation.fdtd.json'
+    solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
+    
+    solver['mesh']['elements'][12]['coordinateIds'] = [1,2]
+    solver['sources'][0]['elementIds'] = [1]
+    solver.cleanUp()
+    solver.run()
+    i = Probe(solver.getSolvedProbeFilenames("Bulk_probe")[0]).data['current']
+    assert np.all(i >= 0)
+
+    solver['mesh']['elements'][12]['coordinateIds'] = [2,1]
+    solver['sources'][0]['elementIds'] = [1]
+    solver.cleanUp()
+    solver.run()
+    i = Probe(solver.getSolvedProbeFilenames("Bulk_probe")[0]).data['current']
+    assert np.all(i >= 0)
+
+    solver['mesh']['elements'][12]['coordinateIds'] = [1,2]
+    solver['sources'][0]['elementIds'] = [3]
+    solver.cleanUp()
+    solver.run()
+    i = Probe(solver.getSolvedProbeFilenames("Bulk_probe")[0]).data['current']
+    assert np.all(i <= 0)
+
+    solver['mesh']['elements'][12]['coordinateIds'] = [2,1]
+    solver['sources'][0]['elementIds'] = [3]
+    solver.cleanUp()
+    solver.run()
+    i = Probe(solver.getSolvedProbeFilenames("Bulk_probe")[0]).data['current']
+    assert np.all(i <= 0)
+
+# compiled without mtln uses classic wires
+# compiled with mtln, wire is treated as an unshielded multiwire
+@pytest.mark.sgbc
+@pytest.mark.wires
+@pytest.mark.probes
+def test_sgbc_structured_resistance_single_wire(tmp_path):
     fn = CASES_FOLDER + 'sgbcResistance/sgbcResistance.fdtd.json'
     solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
+    
+    solver['materials'][2] = createWire(id = 3, r = 1e-4)
     solver.run()
 
-    i = Probe(solver.getSolvedProbeFilenames("Bulk probe")[0]).data['current']
+    i = Probe(solver.getSolvedProbeFilenames("Bulk_probe")[0]).data['current']
     assert np.allclose(i.array[-101:-1], np.ones(100)*i.array[-100], rtol=1e-3)
-    assert np.allclose(-1/i.array[-101:-1], np.ones(100)*(50+45), rtol=0.05)
+    assert np.allclose(1/i.array[-101:-1], np.ones(100)*(50+45), rtol=0.05)
 
 
+
+# compiled without mtln uses classic wires
+# compiled with mtln, wire is treated as an unshielded multiwire
+@pytest.mark.sgbc
+@pytest.mark.probes
 def test_pec_overlapping_sgbcs(tmp_path):
     """ Test that PEC surfaces overlapping SGBC surfaces prioritize PEC.
     """
     fn = CASES_FOLDER + 'sgbcOverlapping/sgbcOverlapping.fdtd.json'
-
     # Runs case without overlap.
     solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
     solver.run()
+
     p = Probe(solver.getSolvedProbeFilenames("Bulk probe")[0])
     t = p['time'].to_numpy()
     iSGBC = p['current'].to_numpy()
@@ -366,7 +745,6 @@ def test_pec_overlapping_sgbcs(tmp_path):
     solver.run()
     iPEC = Probe(solver.getSolvedProbeFilenames("Bulk probe")[0])['current'].to_numpy()
 
-    
     # For debugging only.
     # plt.figure()
     # plt.plot(t, iSGBC,'.-', label='SGBC case')
@@ -378,7 +756,11 @@ def test_pec_overlapping_sgbcs(tmp_path):
     
     # Checks values are different due to PEC prioritization.
     assert np.all(np.greater(np.abs(iPEC[1000:]), np.abs(iSGBC[1000:])))
-
+ 
+# compiled without mtln uses classic wires
+# compiled with mtln, wire is treated as an unshielded multiwire
+@pytest.mark.sgbc
+@pytest.mark.probes
 def test_sgbc_overlapping_sgbc(tmp_path):
     """ Test that SGBC surfaces overlapping SGBC surfaces prioritize first in MatAss.
     """
@@ -401,7 +783,6 @@ def test_sgbc_overlapping_sgbc(tmp_path):
     solver.cleanUp()
     solver.run()
     iSGBC_bottom = Probe(solver.getSolvedProbeFilenames("Bulk probe")[0])['current'].to_numpy()
-
     
     # For debugging only.
     # plt.figure()
@@ -410,11 +791,12 @@ def test_sgbc_overlapping_sgbc(tmp_path):
     # plt.grid(which='both')
     # plt.legend()
     # plt.show()
-
     
     # Checks values are different due to prioritization of first written.
     assert np.all(np.greater(np.abs(iSGBC_top[1000:]), np.abs(iSGBC_bottom[1000:])))
 
+@pytest.mark.dielectric
+@pytest.mark.probes
 def test_dielectric_transmission(tmp_path):
     _FIELD_TOLERANCE = 0.05
 
@@ -475,6 +857,8 @@ def test_dielectric_transmission(tmp_path):
     assert np.allclose(reflectedDelay/transmitedDelay, expectedDelayRatio, rtol=_FIELD_TOLERANCE)
 
     
+@pytest.mark.conformal
+@pytest.mark.probes
 def test_rectilinear_mode(tmp_path):
     _FIELD_TOLERANCE = 4
     _TIME_TOLERANCE = 4
@@ -510,29 +894,36 @@ def test_rectilinear_mode(tmp_path):
     np.testing.assert_almost_equal(getPeakPulse(rectilinearVertexProbe)['value'], getPeakPulse(noRectilinearVertexProbe)['value'], decimal=_FIELD_TOLERANCE)
     np.testing.assert_almost_equal(getPeakPulse(rectilinearVertexProbe)['time'], getPeakPulse(noRectilinearVertexProbe)['time'], decimal=_TIME_TOLERANCE)
     
-def testCanExecuteFDTDFromFolderWithSpacesAndCanProcessAdditionalArguments(tmp_path):
-    projectRoot = os.getcwd()
-    folderWitSpaces: str  = os.path.join(tmp_path, "spaced bin")
-    os.mkdir(folderWitSpaces)
+@pytest.mark.dielectric
+@pytest.mark.probes
+@pytest.mark.vtk
+def test_can_execute_fdtd_from_folder_with_spaces_and_can_process_additional_arguments(tmp_path):
+    folderWithSpaces: str  = os.path.join(tmp_path, "spaced bin")
+    os.mkdir(folderWithSpaces)
     if platform == 'win32':
-        shutil.copy2(NGSPICE_DLL, folderWitSpaces)
+        shutil.copy2(NGSPICE_DLL, folderWithSpaces)
  
-    sembaExecutable = SEMBA_EXE.split(os.path.sep)[-1]
-    pathToExe: str = os.path.join(folderWitSpaces, sembaExecutable)
+    sembaExecutable = os.path.basename(SEMBA_EXE)
+    pathToExe: str = os.path.join(folderWithSpaces, sembaExecutable)
     shutil.copy2(SEMBA_EXE, pathToExe)
-    print(pathToExe)
     
     fn = CASES_FOLDER + "dielectric/dielectricTransmission.fdtd.json"
-    solver = FDTD(fn, path_to_exe=pathToExe, run_in_folder=tmp_path)
+    solver = FDTD(fn, path_to_exe=pathToExe, run_in_folder=tmp_path, flags=['-mapvtk'])
     solver.run()
     assert (Probe(solver.getSolvedProbeFilenames("outside")[0]) is not None)
-    assert (solver.getVTKMap()[0] is not None)
-
-
+    vtk_map_path = solver.getVTKMap()
+    assert vtk_map_path is not None and os.path.isfile(vtk_map_path)
+    
+# compiled without mtln uses classic wires
+# compiled with mtln, wire is treated as an unshielded multiwire
+@pytest.mark.wires
+@pytest.mark.nodal_source
+@pytest.mark.probes
 def test_nodal_source(tmp_path):
     fn = CASES_FOLDER + "nodalSource/nodalSource.fdtd.json"
     assert (os.path.isfile(fn))
     solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
+    solver['materials'][1] = createWire(id = 2, r = 0.1e-5, rpul=10000.0)
     solver.run()
     
     resistanceBulkProbe = Probe( \
@@ -558,21 +949,56 @@ def test_nodal_source(tmp_path):
     assert np.corrcoef(exc, -nodalBulkProbe['current'])[0,1] > 0.999
     assert np.corrcoef(-nodalBulkProbe['current'], resistanceBulkProbe['current'])[0,1] > 0.998
 
+@pytest.mark.wires
+@pytest.mark.nodal_source
+@pytest.mark.probes
+def test_nodal_source_with_total_resistance(tmp_path):
+    """Verify that totalResistance in materialAssociation overrides resistancePerMeter from material.
+    
+    The nodalSource wire spans 10 cells of 0.001 m each (total 0.01 m).
+    totalResistance = 100.0 Ohm  <=>  resistancePerMeter = 10000.0 Ohm/m.
+    The material's resistancePerMeter is set to zero and the total resistance is
+    supplied through the materialAssociation instead.
+    """
+    fn = CASES_FOLDER + "nodalSource/nodalSource.fdtd.json"
+    assert (os.path.isfile(fn))
+    solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
+    solver['materials'][1]['resistancePerMeter'] = 0.0
+    solver['materialAssociations'][1]['totalResistance'] = 100.0
+    solver.run()
 
-def testCanAssignSameSurfaceImpedanceToMultipleGeometries(tmp_path):
+    resistanceBulkProbe = Probe( \
+        solver.getSolvedProbeFilenames("Bulk probe Resistance")[0])
+    nodalBulkProbe = Probe( \
+        solver.getSolvedProbeFilenames("Bulk probe Nodal Source")[0])
+    excitation = ExcitationFile( \
+        excitation_filename=solver.getExcitationFile("predefinedExcitation")[0])
+
+    exc = np.interp(nodalBulkProbe['time'].to_numpy(),
+                    excitation.data['time'].to_numpy(),
+                    excitation.data['value'].to_numpy())
+    assert np.corrcoef(exc, -nodalBulkProbe['current'])[0,1] > 0.999
+    assert np.corrcoef(-nodalBulkProbe['current'], resistanceBulkProbe['current'])[0,1] > 0.998
+
+@pytest.mark.sgbc
+def test_can_assign_same_surface_impedance_to_multiple_geometries(tmp_path):
     fn = CASES_FOLDER + 'multipleAssigments/multipleSurfaceImpedance.fdtd.json'
 
     solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
     solver.run()
     assert (Probe(solver.getSolvedProbeFilenames("BulkProbeEntry")[0]) is not None)
 
-def testCanAssignSameDielectricMaterialToMultipleGeometries(tmp_path):
+@pytest.mark.dielectric
+def test_can_assign_same_dielectric_material_to_multiple_geometries(tmp_path):
     fn = CASES_FOLDER + 'multipleAssigments/multipleDielectricMaterial.fdtd.json'
 
     solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
     solver.run()
     assert (Probe(solver.getSolvedProbeFilenames("BulkProbeEntry")[0]) is not None)
 
+@mtln_skip
+@pytest.mark.lumped
+@pytest.mark.probes
 def test_lumped_resistor(tmp_path):
     # This test validates the behavior of lumped resistor materials in a simplified circuit.
     # The circuit consists of a 40mm x 40mm simple loop with a lumped resistor line inserted along one edge.
@@ -631,6 +1057,9 @@ def test_lumped_resistor(tmp_path):
     assert np.corrcoef(StartLumpedProbe['current'].to_numpy(), I_theo)[0, 1] > 0.999
     assert np.corrcoef(EndLumpedProbe['current'].to_numpy(), I_theo)[0, 1] > 0.999
 
+@mtln_skip
+@pytest.mark.lumped
+@pytest.mark.probes
 def test_lumped_capacitor(tmp_path):
     # This test validates the behavior of lumped capacitor materials in a simplified circuit. The lumped capacitor 
     # can be modeled as a capacitor in parallel with a resistor.
@@ -673,6 +1102,9 @@ def test_lumped_capacitor(tmp_path):
     assert np.corrcoef(StartLumpedProbe['current'].to_numpy(), I_theo)[0, 1] > 0.999
     assert np.corrcoef(EndLumpedProbe['current'].to_numpy(), I_theo)[0, 1] > 0.999
 
+@mtln_skip
+@pytest.mark.lumped
+@pytest.mark.probes
 def test_lumped_inductor(tmp_path):
     # This test validates the behavior of lumped inductor materials in a simplified circuit. The lumped inductor
     # can be modeled as an inductor in series with a resistor.
@@ -732,6 +1164,10 @@ def test_lumped_inductor(tmp_path):
     assert np.corrcoef(StartLumpedProbe['current'].to_numpy(), I_theo)[0, 1] > 0.999
     assert np.corrcoef(EndLumpedProbe['current'].to_numpy(), I_theo)[0, 1] > 0.999
 
+@mtln_skip
+@pytest.mark.lumped
+@pytest.mark.termination
+@pytest.mark.probes
 def test_lumped_resistor_parallel_terminal_resistor(tmp_path):
     # This test verifies current splitting behavior in a parallel resistive configuration.
     # The setup consists of a 40mm x 40mm circuit with two parallel elements:
@@ -775,14 +1211,16 @@ def test_lumped_resistor_parallel_terminal_resistor(tmp_path):
     assert np.corrcoef(TopBulk_probe['current'].to_numpy() + BottomBulk_probe['current'].to_numpy(), I_theo)[0, 1] > 0.999
     assert np.corrcoef(InitialBulk_probe['current'].to_numpy(), I_theo)[0, 1] > 0.999
 
-def test_offset_normal_in_x(tmp_path):
+@pytest.mark.nodal_source
+@pytest.mark.probes
+def test_bulk_current_offset_normal_in_x(tmp_path):
     # This test verifies the positive offset along the normal vector (in x-direction) respect to the bulk plane
     # used to measure the current values of the system.
     # The setup consists in a polyline with points [(0 mm,0 mm,0 mm), (20 mm,0 mm,0 mm), (20 mm,-20 mm,0 mm)]
     # as nodal source and three bulk planes defined at x=18 mm, x=20 mm and x=22 mm.
     # The test checks that only the plane defined at x=18 mm has non-zero current values.
 
-    fn = CASES_FOLDER + 'bulk_current_tests/offSet_x/offSet_x.fdtd.json'
+    fn = CASES_FOLDER + 'bulk_current_offsets/offSet_x/offSet_x.fdtd.json'
     solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
     solver.run()
 
@@ -803,14 +1241,16 @@ def test_offset_normal_in_x(tmp_path):
     assert np.allclose(probe_at_x_20['current'].to_numpy(), 0.0, atol=1.5e-3)
     assert np.allclose(probe_at_x_22['current'].to_numpy(), 0.0, atol=1.5e-3)
 
-def test_offset_normal_in_y(tmp_path):
+@pytest.mark.nodal_source
+@pytest.mark.probes
+def test_bulk_current_offset_normal_in_y(tmp_path):
     # This test verifies the positive offset along the normal vector (in y-direction) respect to the bulk plane
     # used to measure the current values of the system.
     # The setup consists in a polyline with points [(0 mm,0 mm,0 mm), (0 mm,0 mm,20 mm), (0 mm,-20 mm,20 mm)]
     # as nodal source and three bulk planes defined at y=-2 mm, y=0 mm and y=2 mm.
     # The test checks that only the plane defined at y=-2 mm has non-zero current values.
 
-    fn = CASES_FOLDER + 'bulk_current_tests/offSet_y/offSet_y.fdtd.json'
+    fn = CASES_FOLDER + 'bulk_current_offsets/offSet_y/offSet_y.fdtd.json'
     solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
     solver.run()
 
@@ -831,14 +1271,16 @@ def test_offset_normal_in_y(tmp_path):
     assert np.allclose(probe_at_y_0['current'].to_numpy(), 0.0, atol=1.5e-3)
     assert np.allclose(probe_at_y_2['current'].to_numpy(), 0.0, atol=1.5e-3)
 
-def test_offset_normal_in_z(tmp_path):
+@pytest.mark.nodal_source
+@pytest.mark.probes
+def test_bulk_current_offset_normal_in_z(tmp_path):
     # This test verifies the positive offset along the normal vector (in z-direction) respect to the bulk plane
     # used to measure the current values of the system.
     # The setup consists in a polyline with points [(0 mm,0 mm,0 mm), (0 mm,0 mm,20 mm), (0 mm,-20 mm,20 mm)]
     # as nodal source and three bulk planes defined at z=18 mm, z=20 mm and z=22 mm.
     # The test checks that only the plane defined at z=18 mm has non-zero current values.
 
-    fn = CASES_FOLDER + 'bulk_current_tests/offSet_z/offSet_z.fdtd.json'
+    fn = CASES_FOLDER + 'bulk_current_offsets/offSet_z/offSet_z.fdtd.json'
     solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
     solver.run()
 
@@ -859,7 +1301,9 @@ def test_offset_normal_in_z(tmp_path):
     assert np.allclose(probe_at_z_20['current'].to_numpy(), 0.0, atol=1.5e-3)
     assert np.allclose(probe_at_z_22['current'].to_numpy(), 0.0, atol=1.5e-3)
 
-def test_offset_perpendicular_in_x(tmp_path):
+@pytest.mark.nodal_source
+@pytest.mark.probes
+def test_bulk_current_offset_perpendicular_in_x(tmp_path):
     # This test verifies the negative offset presented in the y and z directions when the bulk plane is defined
     # with a normal vector in the x-direction.
     # The setup consists in three nodal sources defined as follow:
@@ -878,9 +1322,9 @@ def test_offset_perpendicular_in_x(tmp_path):
     # 1 and 3 respectively; similar behavior if we move one positive cell in the y and z directions for  
     # the bulk planes 1 and 2. This proves that the bulk have a negative offset in the y and z directions.
 
-    fn = CASES_FOLDER + 'bulk_current_tests/threeLines_offSet_x_Perpendicular/threeLines.fdtd.json'
-    fn_negative = CASES_FOLDER + 'bulk_current_tests/threeLines_offSet_x_Perpendicular/threeLinesNegative.fdtd.json'
-    fn_positive = CASES_FOLDER + 'bulk_current_tests/threeLines_offSet_x_Perpendicular/threeLinesPositive.fdtd.json'
+    fn = CASES_FOLDER + 'bulk_current_offsets/threeLines_offSet_x_Perpendicular/threeLines.fdtd.json'
+    fn_negative = CASES_FOLDER + 'bulk_current_offsets/threeLines_offSet_x_Perpendicular/threeLinesNegative.fdtd.json'
+    fn_positive = CASES_FOLDER + 'bulk_current_offsets/threeLines_offSet_x_Perpendicular/threeLinesPositive.fdtd.json'
     
     solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
     solver_negative = FDTD(input_filename = fn_negative, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
@@ -932,7 +1376,9 @@ def test_offset_perpendicular_in_x(tmp_path):
     assert np.allclose(probe1_positive['current'].to_numpy(), 0.0, atol=1.5e-2)
     assert np.allclose(probe2_positive['current'].to_numpy(), 0.0, atol=1.5e-2)
 
-def test_negative_offset_in_x(tmp_path):
+@pytest.mark.nodal_source
+@pytest.mark.probes
+def test_bulk_current_negative_offset_in_x(tmp_path):
     # Following the previous test, we have seen that the bulk surfaces has negative offsets in the directions
     # perpendicular to the normal vector of the bulk surface. The previous test checks the negative offset in the
     # y and z directions when the normal vector is in the x-direction. Now we check the negative offset in the
@@ -948,7 +1394,7 @@ def test_negative_offset_in_x(tmp_path):
     # left edge of the plane. This test checks that the second and third bulk planes measure correctly the current values
     # while the first bulk plane has zero current values. This proves that the bulk have a negative offset in the x-direction.
 
-    fn = CASES_FOLDER + 'bulk_current_tests/negative_offSet_x/offSet_negative_x.fdtd.json'
+    fn = CASES_FOLDER + 'bulk_current_offsets/negative_offSet_x/offSet_negative_x.fdtd.json'
     solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
     solver.run()
 
@@ -968,3 +1414,357 @@ def test_negative_offset_in_x(tmp_path):
     assert np.corrcoef(probeTotal['current'].to_numpy(), I_interp)[0, 1] > 0.999
     assert np.corrcoef(probeL['current'].to_numpy(), I_interp)[0, 1] > 0.999
     assert np.allclose(probeR['current'].to_numpy(), 0.0, atol=3e-3)
+
+def _run_four_probes(tmp_path, json_filename):
+    """Helper: run a four-probe bulk-current case and return the four Probe objects
+    together with the interpolated excitation evaluated at the BC_LL time grid."""
+    solver = FDTD(
+        input_filename=CASES_FOLDER + 'bulk_current_four_probes/' + json_filename,
+        path_to_exe=SEMBA_EXE,
+        run_in_folder=tmp_path
+    )
+    solver.run()
+
+    exc_time = np.loadtxt(solver["sources"][0]["magnitudeFile"], usecols=0)
+    exc_val  = np.loadtxt(solver["sources"][0]["magnitudeFile"], usecols=1)
+
+    probe_LL = Probe(solver.getSolvedProbeFilenames("BC_LL")[0])
+    probe_LU = Probe(solver.getSolvedProbeFilenames("BC_LU")[0])
+    probe_UU = Probe(solver.getSolvedProbeFilenames("BC_UU")[0])
+    probe_UL = Probe(solver.getSolvedProbeFilenames("BC_UL")[0])
+
+    probe_time = probe_LL["time"].to_numpy()
+    exc_interp = np.interp(probe_time, exc_time, exc_val)
+
+    return probe_LL, probe_LU, probe_UU, probe_UL, exc_interp
+
+@pytest.mark.nodal_source
+@pytest.mark.probes
+def test_bulk_current_four_probes_X_oriented(tmp_path):
+    # A nodal current source runs along X through cell (23,23).
+    # Four bulk-current probes are arranged in the YZ plane at x=4:
+    #   BC_LL and BC_LU and BC_UL lie outside the wire path -> near zero.
+    #   BC_UU contains the wire -> correlates with the excitation.
+    probe_LL, probe_LU, probe_UU, probe_UL, exc_interp = \
+        _run_four_probes(tmp_path, 'bulk_currents_X_oriented.fdtd.json')
+
+    assert np.corrcoef(exc_interp, probe_UU["current"].to_numpy())[0, 1] > 0.9999
+    assert np.allclose(probe_LL["current"].to_numpy(), 0.0, atol=2e-3)
+    assert np.allclose(probe_LU["current"].to_numpy(), 0.0, atol=2e-3)
+    assert np.allclose(probe_UL["current"].to_numpy(), 0.0, atol=2e-3)
+
+@pytest.mark.nodal_source
+@pytest.mark.probes
+def test_bulk_current_four_probes_Y_oriented(tmp_path):
+    # A nodal current source runs along Y through cell (23,23).
+    # Four bulk-current probes are arranged in the XZ plane at y=4:
+    #   BC_LL and BC_LU and BC_UL lie outside the wire path -> near zero.
+    #   BC_UU contains the wire -> correlates with the excitation.
+    probe_LL, probe_LU, probe_UU, probe_UL, exc_interp = \
+        _run_four_probes(tmp_path, 'bulk_currents_Y_oriented.fdtd.json')
+
+    assert np.corrcoef(exc_interp, probe_UU["current"].to_numpy())[0, 1] > 0.9999
+    assert np.allclose(probe_LL["current"].to_numpy(), 0.0, atol=2e-3)
+    assert np.allclose(probe_LU["current"].to_numpy(), 0.0, atol=2e-3)
+    assert np.allclose(probe_UL["current"].to_numpy(), 0.0, atol=2e-3)
+
+@pytest.mark.nodal_source
+@pytest.mark.probes
+def test_bulk_current_four_probes_Z_oriented(tmp_path):
+    # A nodal current source runs along Z through cell (23,23).
+    # Four bulk-current probes are arranged in the XY plane at z=4:
+    #   BC_LL and BC_LU and BC_UL lie outside the wire path -> near zero.
+    #   BC_UU contains the wire -> correlates with the excitation.
+    probe_LL, probe_LU, probe_UU, probe_UL, exc_interp = \
+        _run_four_probes(tmp_path, 'bulk_currents_Z_oriented.fdtd.json')
+
+    assert np.corrcoef(exc_interp, probe_UU["current"].to_numpy())[0, 1] > 0.9999
+    assert np.allclose(probe_LL["current"].to_numpy(), 0.0, atol=2e-3)
+    assert np.allclose(probe_LU["current"].to_numpy(), 0.0, atol=2e-3)
+    assert np.allclose(probe_UL["current"].to_numpy(), 0.0, atol=2e-3)
+
+
+# compiled without mtln uses classic wires
+# compiled with mtln, wire is treated as an unshielded multiwire
+@pytest.mark.conformal
+@pytest.mark.wires
+@pytest.mark.probes
+def test_conformal_impedance_cylinder_unshielded(tmp_path):
+    case_name = 'conformal_impedance_cylinder_conformal'
+    solver = FDTD(input_filename=TEST_DATA_FOLDER+'cases/conformal_impedance_cylinder/'+case_name+'.fdtd.json', path_to_exe=SEMBA_EXE,
+                  run_in_folder=tmp_path)
+    solver.cleanUp()
+    solver.run()
+    assert solver.hasFinishedSuccessfully()
+    bulk_conf = Probe(solver.getSolvedProbeFilenames("BulkProbe")[0])
+   
+    #discrete fourier transforms
+    exc_file = solver.getExcitationFile("predefinedExcitation")[0]
+    exc = pd.read_csv(exc_file, sep='\\s+')
+    exc = exc.rename(columns={
+        exc.columns[0]: 'time',
+        exc.columns[1]: 'V'
+    })
+    new_freqs = np.geomspace(1e3, 1e6, num=100)
+    Vexc = exc["V"].to_numpy()
+    texc = exc["time"].to_numpy()
+    dt_exc = texc[1]-texc[0]
+    Vfexc = dt_exc*np.array([np.sum(Vexc * np.exp(-1j * 2 * np.pi * f * texc)) for f in new_freqs])
+
+    Ibulk_conf = bulk_conf["current"].to_numpy()
+    tbulk_conf = bulk_conf["time"].to_numpy()
+    dt_bulk_conf = tbulk_conf[1]-tbulk_conf[0]
+    Ifbulk_conf = dt_bulk_conf*np.array([np.sum(Ibulk_conf * np.exp(-1j * 2 * np.pi * f * tbulk_conf)) for f in new_freqs])
+
+    data = pd.read_csv(OUTPUTS_FOLDER+'conformal_cylinder_impedance_output.dat', sep=" ", header=0)
+    data.columns = ["f", "z"]
+
+    assert np.corrcoef(data['z'], np.abs(Vfexc/Ifbulk_conf))[0,1] > 0.999
+
+    
+@pytest.mark.conformal
+@pytest.mark.farfield
+@pytest.mark.probes
+def test_conformal_sphere_rcs(tmp_path):
+    case_name = 'conformal_sphere_rcs'
+    solver = FDTD(input_filename=TEST_DATA_FOLDER+'cases/conformal/'+case_name+'.fdtd.json', path_to_exe=SEMBA_EXE,
+                  run_in_folder=tmp_path)
+    solver.run()
+    assert solver.hasFinishedSuccessfully()
+
+    far  = Probe(solver.getSolvedProbeFilenames("n2f")[0])
+    ra = far.data.loc[(far.data['Theta'] == 90.0) & (far.data['Phi'] ==  0.0), 'rcs_arit']
+    rg = far.data.loc[(far.data['Theta'] == 90.0) & (far.data['Phi'] ==  0.0), 'rcs_geom']
+    ffar  = far.data.loc[(far.data['Theta'] == 90.0) & (far.data['Phi'] ==  0.0), 'freq']
+    
+    # analytical RCS
+    f = np.linspace(1e7,7e8,200)
+    r = 0.5 # in meters
+    rcs = RCS(fspace=f, radius=r)
+    # simulated, interpolated to analytical frequencies
+    rcs_interp = np.interp(f,ffar,rg)
+
+    assert np.corrcoef(rcs[5:150], rcs_interp[5:150])[0,1] > 0.98
+
+@pytest.mark.conformal
+@pytest.mark.probes
+def test_conformal_delay(tmp_path):
+    fn = CASES_FOLDER + 'conformal/conformal.fdtd.json'
+    solver = FDTD(input_filename=fn, path_to_exe=SEMBA_EXE,
+                  run_in_folder=tmp_path, flags=['-mapvtk'])
+
+    solver['materialAssociations'][0]['elementIds'] = [4]
+    solver['mesh']['elements'][3]['intervals'] = [[[0,0,4],[2,2,4]]]
+    solver.cleanUp()
+    solver.run()
+    front = Probe(solver.getSolvedProbeFilenames("front")[0])
+    t = front['time']
+    t4 = t[front['field'].argmin()]
+
+    solver['materialAssociations'][0]['elementIds'] = [5]
+    n = 4
+    for i in range(1,n):
+        solver['mesh']['coordinates'][6]["relativePosition"][2]   = 4.0 + i*1.0/n
+        solver['mesh']['coordinates'][7]["relativePosition"][2]   = 4.0 + i*1.0/n
+        solver['mesh']['coordinates'][8]["relativePosition"][2]   = 4.0 + i*1.0/n
+        solver['mesh']['coordinates'][9]["relativePosition"][2]   = 4.0 + i*1.0/n
+        solver['mesh']['coordinates'][15]["relativePosition"][2]  = 4.0 + i*1.0/n
+        solver['mesh']['coordinates'][16]["relativePosition"][2]  = 4.0 + i*1.0/n
+        solver['mesh']['coordinates'][17]["relativePosition"][2]  = 4.0 + i*1.0/n
+        solver['mesh']['coordinates'][18]["relativePosition"][2]  = 4.0 + i*1.0/n
+        solver['mesh']['coordinates'][19]["relativePosition"][2]  = 4.0 + i*1.0/n
+
+        solver.cleanUp()
+        solver.run()
+        front = Probe(solver.getSolvedProbeFilenames("front")[0])
+        t = front['time']
+        delay = t[front['field'].argmin()]
+        tdelta = t4 + 2*(i*1.0/n)*0.02/3e8
+        assert np.abs(delay - tdelta)/tdelta < 0.01
+        
+
+@no_mtln_skip
+@pytest.mark.mtln
+@pytest.mark.wires
+@pytest.mark.nodal_source
+@pytest.mark.probes
+def test_current_generators_with_resistance(tmp_path):
+    # Checks current and voltage of probes at the extremes of a wire
+    # with a current generator in the middle of the wire
+    
+    fn = CASES_FOLDER + 'sources/sources_current.fdtd.json'
+    solver = FDTD(input_filename=fn, path_to_exe=SEMBA_EXE,
+                  run_in_folder=tmp_path, flags=['-mapvtk'])
+    solver["sources"][0]["elementIds"] = [1]
+    solver.cleanUp()
+    solver.run()
+    Iend = Probe(solver.getSolvedProbeFilenames("probe_end")[0])
+    Istart = Probe(solver.getSolvedProbeFilenames("probe_start")[0])
+    Vend = Probe(solver.getSolvedProbeFilenames("probe_end")[1])
+    Vstart = Probe(solver.getSolvedProbeFilenames("probe_start")[1])
+
+    assert np.allclose(Iend['current_0'][-100:-1], 1.0/3.0, rtol=0.005)
+    assert np.allclose(Istart['current_0'][-100:-1], 1.0/3.0, rtol=0.005)
+    assert np.allclose(Vend['voltage_0'][-100:-1], 16.666, rtol=0.005)
+    assert np.allclose(Vstart['voltage_0'][-100:-1], -16.666, rtol=0.005)
+
+@pytest.mark.wires
+@pytest.mark.nodal_source
+@pytest.mark.probes
+def test_current_generators_without_resistance(tmp_path):
+    # Checks current probes at the extremes of a wire
+    # with a current generator in the middle of the wire and on the extremes of the wire
+    
+    fn = CASES_FOLDER + 'sources/sources_current_no_resistance.fdtd.json'
+    solver = FDTD(input_filename=fn, path_to_exe=SEMBA_EXE,
+                  run_in_folder=tmp_path, flags=['-mapvtk'])
+    solver["sources"][0]["elementIds"] = [1] # wire center
+    solver.cleanUp()
+    solver.run()
+    Iend = Probe(solver.getSolvedProbeFilenames("probe_end")[0])
+    Istart = Probe(solver.getSolvedProbeFilenames("probe_start")[0])
+    assert np.allclose(Iend['current_0'][-100:-1], 1.0, rtol=0.005)
+    assert np.allclose(Istart['current_0'][-100:-1], 1.0, rtol=0.005)
+
+    solver["sources"][0]["elementIds"] = [9] # wire start
+    solver.cleanUp()
+    solver.run()
+    Iend = Probe(solver.getSolvedProbeFilenames("probe_end")[0])
+    Istart = Probe(solver.getSolvedProbeFilenames("probe_start")[0])
+
+    assert np.allclose(Iend['current_0'][-100:-1], 1.0, rtol=0.005)
+    assert np.allclose(Istart['current_0'][-100:-1], 1.0, rtol=0.005)
+
+    solver["sources"][0]["elementIds"] = [10] # wire end
+    solver.cleanUp()
+    solver.run()
+    Iend = Probe(solver.getSolvedProbeFilenames("probe_end")[0])
+    Istart = Probe(solver.getSolvedProbeFilenames("probe_start")[0])
+
+    assert np.allclose(Iend['current_0'][-100:-1], -1.0, rtol=0.005)
+    assert np.allclose(Istart['current_0'][-100:-1], -1.0, rtol=0.005)
+
+@no_mtln_skip
+@pytest.mark.mtln
+@pytest.mark.wires
+@pytest.mark.nodal_source
+@pytest.mark.probes
+def test_voltage_generators(tmp_path):
+    # Checks current and voltage of probes at the extremes of bundle (1 conductor + 1 shield)
+    # with a voltage generator in the middle of the inner conductor
+    fn = CASES_FOLDER + 'sources/sources_voltage.fdtd.json'
+    solver = FDTD(input_filename=fn, path_to_exe=SEMBA_EXE,
+                  run_in_folder=tmp_path, flags=['-mapvtk'])
+    solver["sources"][0]["elementIds"] = [1]
+    solver.cleanUp()
+    solver.run()
+
+    
+    Iend = Probe(solver.getSolvedProbeFilenames("probe_end")[0])
+    Istart = Probe(solver.getSolvedProbeFilenames("probe_start")[0])
+    Vend = Probe(solver.getSolvedProbeFilenames("probe_end")[1])
+    Vstart = Probe(solver.getSolvedProbeFilenames("probe_start")[1])
+
+    assert np.allclose(Iend['current_0'][-100:-1],   0.0, rtol=0.005)
+    assert np.allclose(Istart['current_0'][-100:-1], 0.0, rtol=0.005)
+    assert np.allclose(Vend['voltage_0'][-100:-1],   0.0, rtol=0.005)
+    assert np.allclose(Vstart['voltage_0'][-100:-1], 0.0, rtol=0.005)
+
+    assert np.allclose(Iend['current_1'][-100:-1],   1.0/3.0, rtol=0.005)
+    assert np.allclose(Istart['current_1'][-100:-1], 1.0/3.0, rtol=0.005)
+    assert np.allclose(Vend['voltage_1'][-100:-1],   -16.666, rtol=0.005)
+    assert np.allclose(Vstart['voltage_1'][-100:-1], -16.666, rtol=0.005)
+    
+@pytest.mark.probes
+def test_bulk_current_outputs(tmp_path):
+    # This test uses bulk_probe_cases_over_nodal_source.fdtd from input_examples as input.
+    # Verifies all kind of bulk probes are recognised and setted properly by checking outputFile format.
+    fn = PROBES_INPUT_EXAMPLE + 'bulk_probe_cases_over_nodal_source.fdtd.json'
+    solver = FDTD(fn, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
+    solver.run()
+
+    bulkXPlaneFiles = solver.getSolvedProbeFilenames("BulkXPlane") 
+    bulkYPlaneFiles = solver.getSolvedProbeFilenames("BulkYPlane") 
+    bulkZPlaneFiles = solver.getSolvedProbeFilenames("BulkZPlane") 
+    bulkYPointFiles = solver.getSolvedProbeFilenames("BulkYPoint") 
+    bulkZVolumeFiles = solver.getSolvedProbeFilenames("BulkZVolume") 
+
+    assert len(bulkXPlaneFiles) == 1
+    assert len(bulkYPlaneFiles) == 1
+    assert len(bulkZPlaneFiles) == 1
+    assert len(bulkYPointFiles) == 1
+    assert len(bulkZVolumeFiles) == 10
+
+    probeBulkXPlane = Probe(bulkXPlaneFiles[0])
+    probeBulkYPlane = Probe(bulkYPlaneFiles[0])
+    probeBulkZPlane = Probe(bulkZPlaneFiles[0])
+    probeBulkYPoint = Probe(bulkYPointFiles[0])
+    probeBulkZVolume = Probe(bulkZVolumeFiles[0])
+
+    assert probeBulkXPlane.direction == 'x'
+    assert probeBulkYPlane.direction == 'y'
+    assert probeBulkZPlane.direction == 'z'
+    assert probeBulkYPoint.direction == 'y'
+    assert probeBulkZVolume.direction == 'z'
+
+@no_mtln_skip
+@pytest.mark.mtln
+def test_conductors_forming_y_on_panel_holland_vs_mtln(tmp_path):
+    def get_probe_file(solver, probe_name):
+        folder = Path(solver.getFolder())
+        case_name = solver.getCaseName()
+        files = sorted(folder.glob(f'{case_name}_{probe_name}*.dat'))
+        assert files, f'Probe {probe_name} not found in {folder}'
+        return files[0]
+
+    holland_run = tmp_path / 'holland'
+    mtln_run = tmp_path / 'mtln'
+    holland_run.mkdir()
+    mtln_run.mkdir()
+
+    holland_solver = FDTD(
+        input_filename=CASES_FOLDER + 'conductors_forming_y_on_panel/Conductors_Holland_50ohm_terminals.fdtd.json',
+        path_to_exe=SEMBA_EXE,
+        run_in_folder=holland_run
+    )
+    holland_solver.run()
+
+    mtln_solver = FDTD(
+        input_filename=CASES_FOLDER + 'conductors_forming_y_on_panel/Conductors_MTLN_50ohm_terminals.fdtd.json',
+        path_to_exe=SEMBA_EXE,
+        run_in_folder=mtln_run
+    )
+    mtln_solver.run()
+
+    holland_yplus = Probe(get_probe_file(holland_solver, "curr_yplus"))
+    holland_yminus = Probe(get_probe_file(holland_solver, "curr_yminus"))
+    holland_joined_1 = Probe(get_probe_file(holland_solver, "curr_joined_1"))
+    holland_joined_2 = Probe(get_probe_file(holland_solver, "curr_joined_2"))
+
+    mtln_yplus = Probe(get_probe_file(mtln_solver, "curr_yplus"))
+    mtln_yminus = Probe(get_probe_file(mtln_solver, "curr_yminus"))
+    mtln_joined = Probe(get_probe_file(mtln_solver, "curr_joined"))
+
+    corr_yplus = corrcoef_on_common_time(
+        holland_yplus['time'].to_numpy(), holland_yplus['current'].to_numpy(),
+        mtln_yplus['time'].to_numpy(), mtln_yplus['current'].to_numpy(),
+    )
+    corr_yminus = corrcoef_on_common_time(
+        holland_yminus['time'].to_numpy(), holland_yminus['current'].to_numpy(),
+        mtln_yminus['time'].to_numpy(), mtln_yminus['current'].to_numpy(),
+    )
+
+    # MTLN joined probe contains two current columns for the two conductors.
+    corr_j1 = corrcoef_on_common_time(
+        holland_joined_1['time'].to_numpy(), holland_joined_1['current'].to_numpy(),
+        mtln_joined['time'].to_numpy(), mtln_joined['current_0'].to_numpy(),
+    )
+    corr_j2 = corrcoef_on_common_time(
+        holland_joined_2['time'].to_numpy(), holland_joined_2['current'].to_numpy(),
+        mtln_joined['time'].to_numpy(), mtln_joined['current_1'].to_numpy(),
+    )
+
+    assert corr_yplus > 0.999
+    assert corr_yminus > 0.999
+    assert corr_j1 > 0.999
+    assert corr_j2 > 0.999

@@ -1,31 +1,37 @@
 from utils import *
 
 
+@pytest.mark.probes
+@pytest.mark.wires
 def test_read_wire_probe():
-    p = Probe(OUTPUTS_FOLDER + 'holland1981.fdtd_mid_point_Wz_11_11_12_s2.dat')
+    p = Probe(OUTPUTS_FOLDER + 'fakeCurrentProbe.fdtd_mid_point_Wz_11_11_11_s2.dat')
 
-    assert p.case_name == 'holland1981'
+    assert p.case_name == 'fakeCurrentProbe'
     assert p.name == 'mid_point'
     assert p.type == 'wire'
     assert p.domainType == 'time'
-    assert np.all(p.cell == np.array([11, 11, 12]))
+    assert np.all(p.cell == np.array([11, 11, 11]))
     assert p.segment == 2
 
-    assert len(p['time']) == 1001
+    assert len(p['time']) == 3
     assert p['time'][0] == 0.0
-    assert p['time'].iat[-1] == 0.2999999901276417E-007
+    assert np.isclose(p['time'].iat[-1], 0.59999998025528356E-010)
 
-    assert len(p['current']) == 1001
+    assert len(p['current']) == 3
     assert p['current'][0] == 0.0
-    assert p['current'].iat[-1] == -0.513576742E-004
+    assert p['current'].iat[-1] == -0.000000000E+000
 
 
+@pytest.mark.probes
+@pytest.mark.wires
 def test_read_probe_from_NFDE():
-    p = Probe(OUTPUTS_FOLDER + 'fakeCurrentProbe_mid_point_Wz_11_11_11_s2.dat')
+    p = Probe(OUTPUTS_FOLDER + 'fakeCurrentProbe.fdtd_mid_point_Wz_11_11_11_s2.dat')
 
     assert p.type == 'wire'
 
 
+@pytest.mark.probes
+@pytest.mark.wires
 def test_read_frequency_probe_from_NFDE():
     p = Probe(OUTPUTS_FOLDER + 'edelcadfixZ_COR2_log__Wz_21_21_28_s10_df.dat')
 
@@ -35,6 +41,7 @@ def test_read_frequency_probe_from_NFDE():
     assert p.segment == 10
 
 
+@pytest.mark.probes
 def test_read_point_probe():
     p = Probe(OUTPUTS_FOLDER + 'shieldingEffectiveness.fdtd_front_Ex_1_1_1.dat')
 
@@ -59,6 +66,7 @@ def test_read_point_probe():
     assert p['incident'].iat[-1] == 0.0
 
 
+@pytest.mark.probes
 def test_read_point_probe_without_planewave():
     p = Probe(OUTPUTS_FOLDER + 'twoWires.fdtd_ProbeEnd_Ey_25_13_5.dat')
 
@@ -71,6 +79,7 @@ def test_read_point_probe_without_planewave():
     assert np.all(p.cell == np.array([25, 13, 5]))
 
 
+@pytest.mark.probes
 def test_read_bulk_current_probe():
     p = Probe(OUTPUTS_FOLDER +
               'twoWires.fdtd_Bulk probe_Jx_15_11_13__15_13_17.dat')
@@ -82,6 +91,7 @@ def test_read_bulk_current_probe():
     assert p.direction == 'x'
 
 
+@pytest.mark.planewave
 def test_fdtd_set_new_folder_to_run(tmp_path):
     input = os.path.join(CASES_FOLDER, 'planewave', 'pw-in-box.fdtd.json')
     solver = FDTD(input, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
@@ -91,6 +101,7 @@ def test_fdtd_set_new_folder_to_run(tmp_path):
     solver.run()
 
 
+@pytest.mark.planewave
 def test_fdtd_with_string_args(tmp_path):
     input = os.path.join(CASES_FOLDER, 'planewave', 'pw-in-box.fdtd.json')
     solver = FDTD(input,
@@ -103,6 +114,8 @@ def test_fdtd_with_string_args(tmp_path):
 
 
 @no_mpi_skip
+@pytest.mark.mpi
+@pytest.mark.planewave
 def test_fdtd_with_mpi_run(tmp_path):
     input = os.path.join(CASES_FOLDER, 'planewave', 'pw-in-box.fdtd.json')
     solver = FDTD(input,
@@ -115,6 +128,7 @@ def test_fdtd_with_mpi_run(tmp_path):
     solver.run()
 
 
+@pytest.mark.planewave
 def test_fdtd_clean_up_after_run(tmp_path):
     input = CASES_FOLDER + 'planewave/pw-in-box.fdtd.json'
     solver = FDTD(input, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
@@ -131,6 +145,28 @@ def test_fdtd_clean_up_after_run(tmp_path):
     assert not os.path.isfile(pn[0])
 
 
+@pytest.mark.planewave
+def test_fdtd_clean_up_does_not_delete_other_cases_files(tmp_path):
+    input = CASES_FOLDER + 'planewave/pw-in-box.fdtd.json'
+    solver = FDTD(input, path_to_exe=SEMBA_EXE, run_in_folder=tmp_path)
+
+    case_name = solver.getCaseName()
+    other_case_name = 'other_case.fdtd'
+
+    own_file = os.path.join(str(tmp_path), case_name + '_probe_Ex_1_2_3.dat')
+    other_file = os.path.join(str(tmp_path), other_case_name + '_probe_Ex_1_2_3.dat')
+
+    open(own_file, 'w').close()
+    open(other_file, 'w').close()
+
+    solver.cleanUp()
+
+    assert not os.path.isfile(own_file)
+    assert os.path.isfile(other_file)
+
+
+@pytest.mark.spice
+@pytest.mark.mtln
 def test_fdtd_get_used_files():
     fn = CASES_FOLDER + 'multilines_opamp/multilines_opamp.fdtd.json'
     solver = FDTD(fn, path_to_exe=SEMBA_EXE)
@@ -142,75 +178,5 @@ def test_fdtd_get_used_files():
     assert used_files[1] == 'opamp.model'
 
 
-def test_casemaker_setGridFromVTK():
-    cm = CaseMaker()
-    cm.setGridFromVTK(GEOMETRIES_FOLDER + 'sphere.grid.vtp')
-
-    grid = cm['mesh']['grid']
-    
-    steps = grid['steps']
-    assert np.allclose(np.array(steps['x']), 2.0)
-    assert np.allclose(np.array(steps['y']), 2.0)
-    assert np.allclose(np.array(steps['z']), 2.0)
-    assert np.array(steps['x']).size == 100
-    assert np.array(steps['y']).size == 100
-    assert np.array(steps['z']).size == 100
-
-    assert grid['numberOfCells'] == [100, 100, 100]
-    assert grid['origin'] == [-100.0, -100.0, -100.0]
 
 
-def test_casemaker_sphere_rcs_case(tmp_path):
-    os.chdir(tmp_path)
-    cm = CaseMaker()
-
-    cm.setNumberOfTimeSteps(1)
-    cm.setTimeStep(1e-12)
-
-    cm.setAllBoundaries("mur")
-
-    cm.setGridFromVTK(GEOMETRIES_FOLDER + "sphere.grid.vtp")
-    sphereId = cm.addCellElementsFromVTK(
-        GEOMETRIES_FOLDER + "buggy_sphere.str.vtp")
-
-    pecId = cm.addPECMaterial()
-    cm.addMaterialAssociation(pecId, [sphereId])
-
-    planewaveBoxId = cm.addCellElementBox(
-        [[-75.0, -75.0, -75.0], [75.0, 75.0, 75.0]])
-    direction = {"theta": np.pi/2, "phi": 0.0}
-    polarization = {"theta": np.pi/2, "phi": np.pi/2}
-    dt = 1e-12
-    w0 = 0.1e-9    # ~ 2 GHz bandwidth
-    t0 = 10*w0
-    t = np.arange(0, t0+20*w0, dt)
-    data = np.empty((len(t), 2))
-    data[:,0] = t
-    data[:,1] = np.exp( -np.power(t-t0,2)/ w0**2 )
-    np.savetxt('gauss.exc', data)
-    cm.addPlanewaveSource(planewaveBoxId, 'gauss.exc', direction, polarization)
-
-    pointProbeNodeId = cm.addNodeElement([-65.0, 0.0, 0.0])
-    cm.addPointProbe(pointProbeNodeId, name="front")
-
-    n2ffBoxId = cm.addCellElementBox(
-        [[-85.0, -85.0, -85.0], [85.0, 85.0, 85.0]])
-    theta = {"initial": np.pi/2, "final": np.pi/2, "step": 0.0}
-    phi = {"initial": np.pi, "final": np.pi, "step": 0.0}
-    domain = {
-        "type": "frequency",
-        "initialFrequency": 10e6,
-        "finalFrequency": 1e9,
-        "numberOfFrequencies": 10,
-        "frequencySpacing": "logarithmic"
-    }
-    cm.addFarFieldProbe(n2ffBoxId, "n2ff", theta, phi, domain)
-
-    case_name = 'sphere_rcs'
-    cm.exportCase(case_name)
-
-    solver = FDTD(
-        case_name + ".fdtd.json",
-        path_to_exe=SEMBA_EXE)
-    solver.run()
-    assert solver.hasFinishedSuccessfully()

@@ -9,12 +9,39 @@ set(CMAKE_Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/mod)
 if (SEMBA_FDTD_ENABLE_MTLN)
     add_subdirectory(mtln)
     set(MTLN_TESTS_LIBRARY mtln_tests)
-    set(SYSTEM_TESTS_LIBRARY system_tests)
+    if (NOT SEMBA_FDTD_ENABLE_MPI)
+        add_subdirectory(system)
+        set(SYSTEM_TESTS_LIBRARY system_tests)
+    endif()
 endif()
 if (SEMBA_FDTD_ENABLE_SMBJSON)
+    add_subdirectory(utils)
+    set(UTILS_TEST, test_utils_fortran)
     add_subdirectory(smbjson)
     set(SMBJSON_TESTS_LIBRARY smbjson_tests)
+    add_subdirectory(rotate)
+    set(ROTATE_TESTS_LIBRARY rotate_tests)
+    add_subdirectory(vtk)
+    set(VTK_TESTS_LIBRARY vtk_tests)
+    add_subdirectory(wires)
+    set(WIRES_TESTS_LIBRARY wires_tests)
+    if (NOT SEMBA_FDTD_ENABLE_MPI)
+        add_subdirectory(observation)
+        set(OBSERVATION_TESTS_LIBRARY observation_tests)
+    endif()
 endif()
+
+add_subdirectory(conformal)
+set(CONFORMAL_TESTS_LIBRARY conformal_tests)
+
+add_subdirectory(preprocess)
+set(PREPROCESS_TESTS_LIBRARY preprocess_tests)
+
+add_subdirectory(healer)
+set(HEALER_TESTS_LIBRARY healer_tests)
+
+add_subdirectory(sgbc)
+set(SGBC_TESTS_LIBRARY sgbc_tests)
 
 add_executable(fdtd_tests 
     "fdtd_tests.cpp"
@@ -23,6 +50,15 @@ add_executable(fdtd_tests
 target_link_libraries(fdtd_tests
     ${MTLN_TESTS_LIBRARY}
     ${SMBJSON_TESTS_LIBRARY}
+    ${CONFORMAL_TESTS_LIBRARY}
+    ${PREPROCESS_TESTS_LIBRARY}
+    ${ROTATE_TESTS_LIBRARY}
     ${HDF_TESTS_LIBRARY}
+    ${VTK_TESTS_LIBRARY}
+    ${WIRES_TESTS_LIBRARY}
+    ${SYSTEM_TESTS_LIBRARY}
+    ${OBSERVATION_TESTS_LIBRARY}
+    ${HEALER_TESTS_LIBRARY}
+    ${SGBC_TESTS_LIBRARY}
     GTest::gtest_main
 )

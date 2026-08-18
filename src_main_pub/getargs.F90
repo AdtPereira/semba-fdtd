@@ -1,35 +1,40 @@
 
-    
-Module Getargs
-   USE NFDETYPES , ONLY: BUFSIZE
-   implicit none
-   private 
 
-   public getcommandargument,commandargumentcount
+Module Getargs_m
+   use NFDETypes_m , ONLY: BUFSIZE
+   implicit none
+   private
+
+   public getBinaryPath, getcommandargument,commandargumentcount
 
 contains
 
-   subroutine getcommandargument(chain2,posic,argum,length,status)
-      character (LEN=BUFSIZE)  ::chain2, argum, argument, binaryPath
-      integer (kind=4)  :: length, status, posic, binaryPathLenght, argumentStart, argumentEnd
-      integer (kind=4) :: n, i, j
+   function getBinaryPath() result(res)
+      character(len=BUFSIZE) :: res
+      call getarg(0, res)
+   end function
 
-      CALL removeDoubleWhiteSpaces(chain2)
+   subroutine getcommandargument(chain2,posic,argum,length,status, binaryPath)
+      character(len=BUFSIZE) ::chain2, argum, argument, binaryPath
+      integer(kind=4) :: length, status, posic, binaryPathLenght, argumentStart, argumentEnd
+      integer(kind=4) :: n, i, j
 
-      CALL getarg(0, binaryPath)
+      call removeDoubleWhiteSpaces(chain2)
+
+      ! call getarg(0, binaryPath)
       binaryPathLenght = len(trim(adjustl(binaryPath)))
-      
+
       !!Check if binary path is surrounded by double quotes. In that case, returns corrected binary path and lenght
       if ((chain2(1:1) == '"') .and. (chain2(binaryPathLenght+2 : binaryPathLenght+2) == '"')) then
-        binaryPath = '"' // trim(adjustl(binaryPath)) // '"'
-        binaryPathLenght = binaryPathLenght + 2
+         binaryPath = '"' // trim(adjustl(binaryPath)) // '"'
+         binaryPathLenght = binaryPathLenght + 2
       end if
 
-      if (posic == 1) then 
+      if (posic == 1) then
          argum = binaryPath
          return
       end if
-      
+
       status=0
       argumentStart=0
       argumentEnd=0
@@ -41,31 +46,31 @@ contains
                if (chain2(j : j)/=' ') argumentStart=j
                exit findStart
             end do
-         endif
+         end if
       end do findStart
 
       findEnd :  do i=argumentStart + 1 ,len(trim(adjustl(chain2)))+2
          if (chain2(i : i)==' ') then
             argumentEnd=i-1
             exit findEnd
-         endif
+         end if
       end do findEnd
 
       if (argumentStart+argumentEnd==0) status=1
       argum=trim(adjustl(chain2(argumentStart : argumentEnd)))
 
-      !100615 para evitar el crlf del .sh
+      !Avoids crlf in .sh
       if ( (argum(1:1) ==char(10)) .or. (argum(1:1) ==char(13)) .or. (argum(1:1)==char( 0)) ) then
          argum=''
          return
-      endif
+      end if
 
       return
    end subroutine
 
    subroutine removeDoubleWhiteSpaces(chain2)
       integer(kind=4) :: i, j
-      character(LEN=BUFSIZE) :: chain2
+      character(len=BUFSIZE) :: chain2
 
       do i=1,len(trim(adjustl(chain2)))
          if (chain2(i : i)==' ') then
@@ -73,26 +78,26 @@ contains
                if (chain2(j : j)/=' ') then
                   chain2(i+1 :)=chain2(j :)
                   exit rebus
-               endif
+               end if
             end do rebus
-         endif
+         end if
       end do
-   
-      end subroutine
 
-   function commandargumentcount(chain2)
-      character (LEN=BUFSIZE)  ::  chain2, binaryPath
-      integer (kind=4)  ::  status,n,commandargumentcount, binaryPathLenght, i
+   end subroutine
 
-      CALL removeDoubleWhiteSpaces(chain2)
+   function commandargumentcount(chain2, binaryPath)
+      character(len=BUFSIZE) :: chain2, binaryPath
+      integer(kind=4) :: status,n,commandargumentcount, binaryPathLenght, i
 
-      CALL getarg(0, binaryPath)
+      call removeDoubleWhiteSpaces(chain2)
+
+      ! call getarg(0, binaryPath)
       binaryPathLenght = len(trim(adjustl(binaryPath)))
-      
+
       !!Check if binary path is surrounded by double quotes. In that case, returns corrected binary path and lenght
       if ((chain2(1:1) == '"') .and. (chain2(binaryPathLenght+2 : binaryPathLenght+2) == '"')) then
-        binaryPath = '"' // trim(adjustl(binaryPath)) // '"'
-        binaryPathLenght = binaryPathLenght + 2
+         binaryPath = '"' // trim(adjustl(binaryPath)) // '"'
+         binaryPathLenght = binaryPathLenght + 2
       end if
 
       n = 1
@@ -100,7 +105,7 @@ contains
       do i=binaryPathLenght  ,len(trim(adjustl(chain2)))
          if (chain2(i : i)==' ') then
             n=n+1
-         endif 
+         end if
       end do
 
       status=0

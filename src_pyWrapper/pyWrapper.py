@@ -6,11 +6,6 @@ import glob
 import re
 import pandas as pd
 import numpy as np
-import vtk
-from vtk.util.numpy_support import vtk_to_numpy
-from itertools import product
-import copy
-import matplotlib.pyplot as plt
 
 DEFAULT_SEMBA_FDTD_PATH = '/build/bin/semba-fdtd'
 
@@ -123,6 +118,12 @@ class Probe():
             self.type = 'farField'
             self.cell_init, self.cell_end = \
                 Probe._positionStrToTwoCells(position_str)
+            self.data = self.data.rename(columns={
+                self.data.columns[0]: 'freq',
+                self.data.columns[7]: 'rcs_arit',
+                self.data.columns[8]: 'rcs_geom'
+            })
+
         elif tag in Probe.MOVIE_TAGS:
             self.type = 'movie'
             self.cell_init, self.cell_end = \
@@ -146,6 +147,16 @@ class Probe():
             raise ValueError("Unable to determine probe type")
 
     def __getitem__(self, key):
+        if key not in self.data.columns:
+            if key == 'current' and 'current_0' in self.data.columns:
+                return self.data['current_0']
+            elif key == 'current_0' and 'current' in self.data.columns:
+                return self.data['current']
+            
+            if key == 'voltage' and 'voltage_0' in self.data.columns:
+                return self.data['voltage_0']
+            elif key == 'voltage_0' and 'voltage' in self.data.columns:
+                return self.data['voltage']
         return self.data[key]
 
     @staticmethod
@@ -206,6 +217,7 @@ class Probe():
     def _getFieldAndDirection(tag: str):
         return tag[1], tag[2]
 
+
 class ExcitationFile():
     def __init__(self, excitation_filename):
         if isinstance(excitation_filename, os.PathLike):
@@ -214,11 +226,12 @@ class ExcitationFile():
             self.filename = excitation_filename
         assert os.path.isfile(self.filename)
 
-        self.data = pd.read_csv(self.filename, sep='\\s+', names=['time', 'value'])
+        self.data = pd.read_csv(
+            self.filename, sep='\\s+', names=['time', 'value'])
 
     def __getitem__(self, key):
         return self.data[key]
-    
+
 
 class FDTD():
     def __init__(self, input_filename, path_to_exe=None,
@@ -287,18 +300,12 @@ class FDTD():
                 if 'magnitudeFile' in p:
                     res.append(p['magnitudeFile'])
 
-        # .model files in circuit type materials.
-        if 'materials' in self._input:
-            for p in self._input['materials']:
-                if 'file' in p:
-                    res.append(p['file'])
-
         # .model files in terminations.
         if 'materials' in self._input:
             for p in self._input['materials']:
                 if 'terminations' in p:
                     for t in p['terminations']:
-                        if 'file' in t:
+                        if 'file' in t and not t['file'] in res:
                             res.append(t['file'])
 
         return res
@@ -320,7 +327,7 @@ class FDTD():
             json.dump(self._input, open(self._filename, 'w'))
 
         os.chdir(self.getFolder())
-        self.output = subprocess.run(self.run_command)
+        self.output = subprocess.run(self.run_command, capture_output=True)
         self._hasRun = True
         assert self.hasFinishedSuccessfully()
 
@@ -328,6 +335,10 @@ class FDTD():
         if self._hasRun and (self.output.returncode == 0):
             return True
         else:
+            if self.output.stdout:
+                print(self.output.stdout.decode('utf-8'), end='')
+            if self.output.stderr:
+                print(self.output.stderr.decode('utf-8'), end='')
             return False
 
     def __getitem__(self, key):
@@ -335,17 +346,19 @@ class FDTD():
 
     def cleanUp(self):
         folder = self.getFolder()
+        case_name = self.getCaseName()
         extensions = ('*.dat', '*.pl', '*.txt', '*.xdmf', '*.bin', '*.h5')
         for ext in extensions:
-            files = glob.glob(folder + '/' + ext)
+            files = glob.glob(os.path.join(folder, ext))
             for file in files:
-                os.remove(file)
+                if os.path.basename(file).startswith(case_name):
+                    os.remove(file)
 
         subfolders = [item for item in os.listdir(
             folder) if os.path.isdir(os.path.join(folder, item))]
         for f in subfolders:
-            shutil.rmtree(f, ignore_errors=True)
-
+            if f.startswith(case_name):
+                shutil.rmtree(os.path.join(folder, f), ignore_errors=True)
 
     def getSolvedProbeFilenames(self, probe_name):
         if not "probes" in self._input:
@@ -361,17 +374,18 @@ class FDTD():
         return sorted(probeFiles)
 
     def getExcitationFile(self, excitation_file_name):
-        file_extensions =('*.1.exc',)
+        file_extensions = ('*.exc',)
         excitationFile = []
         for ext in file_extensions:
-            newExcitationFile = [x for x in glob.glob(ext) if re.match(excitation_file_name, x)]
+            newExcitationFile = [x for x in glob.glob(
+                ext) if re.match(excitation_file_name, x)]
             excitationFile.extend(newExcitationFile)
-        
+
         if ((len(excitationFile)) != 1):
-            raise "Unexpected number of excitation Files found: {}".format(excitationFile)
+            raise ValueError(
+                "Unexpected number of excitation Files found: {}".format(excitationFile))
 
         return excitationFile
-
 
     def getVTKMap(self):
         current_path = os.getcwd()
@@ -382,9 +396,8 @@ class FDTD():
         for folder in folders:
             mapFile = os.path.join(current_path, folder, folder+"_1.vtk")
             if os.path.isfile(mapFile):
-                return mapFile            
+                return mapFile
         raise ValueError("Unable to find mapvatk file")
-
 
     def getCurrentVTKMap(self):
         current_path = os.getcwd()
@@ -393,7 +406,8 @@ class FDTD():
         if len(folders) != 1:
             return None
         for folder in folders:
-            mapFile = os.path.join(current_path, folder, folder+"_1_current.vtk")
+            mapFile = os.path.join(current_path, folder,
+                                   folder+"_1_current.vtk")
             if os.path.isfile(mapFile):
                 return mapFile
         raise ValueError("Unable to find current vtk file")
@@ -403,286 +417,3 @@ class FDTD():
             for idx, element in enumerate(self._input['materials']):
                 if element.get("name") == materialName:
                     return self._input['materials'][idx]
-
-
-class CaseMaker():
-    # A collection of helper functions to create FDTD cases.
-    def __init__(self):
-        self.input = {}
-
-    def __getitem__(self, key):
-        return self.input[key]
-
-    def setNumberOfTimeSteps(self, steps):
-        if 'general' not in self.input:
-            self.input['general'] = {}
-
-        self.input['general']['numberOfSteps'] = steps
-
-    def setTimeStep(self, time):
-        if 'general' not in self.input:
-            self.input['general'] = {}
-
-        self.input['general']['timeStep'] = time
-
-    def setGridFromVTK(self, path_to_grid):
-        assert os.path.isfile(path_to_grid)
-
-        reader = vtk.vtkXMLPolyDataReader()
-        reader.SetFileName(path_to_grid)
-        reader.Update()
-
-        points = vtk_to_numpy(reader.GetOutput().GetPoints().GetData())
-
-        if 'mesh' not in self.input:
-            self.input['mesh'] = {}
-
-        if 'grid' not in self.input['mesh']:
-            self.input['mesh']['grid'] = {}
-
-        grid = self.input['mesh']['grid']
-        if 'steps' not in grid:
-            grid['steps'] = {}
-
-        steps = grid['steps']
-        grid['numberOfCells'] = []
-        grid['origin'] = []
-
-        index = 0
-        for x in ['x', 'y', 'z']:
-            steps[x] = np.diff(np.unique(points[:, index])).tolist()
-            grid['numberOfCells'].append(len(steps[x]))
-            grid['origin'].append(float(points[0, index]))
-            index += 1
-
-    def setAllBoundaries(self, boundary_type):
-        self.input['boundary'] = {
-            "all": {
-                "type": boundary_type
-            }
-        }
-
-    def addCellElementsFromVTK(self, path_to_vtk):
-        assert os.path.isfile(path_to_vtk)
-
-        reader = vtk.vtkXMLPolyDataReader()
-        reader.SetFileName(path_to_vtk)
-        reader.Update()
-        polyData = reader.GetOutput()
-
-        vtkGroups = vtk_to_numpy(polyData.GetCellData().GetArray('group'))
-        if len(np.unique(vtkGroups)) > 1:
-            raise ValueError("Different groups are not supported.")
-
-        # Stores in case input
-        if 'mesh' not in self.input:
-            self.input['mesh'] = {}
-
-        if 'elements' not in self.input['mesh']:
-            self.input['mesh']['elements'] = []
-        elements = self.input['mesh']['elements']
-
-        id = len(elements) + 1
-        elements.append({
-            "id": id,
-            "type": "cell",
-            "intervals": self._getCellsIntervals(polyData),
-        })
-
-        return id
-
-    def addCellElementBox(self, boundingBox):
-        ''' boundingBox is assumed to be in absolute coordinates.'''
-        if 'mesh' not in self.input:
-            self.input['mesh'] = {}
-
-        if 'elements' not in self.input['mesh']:
-            self.input['mesh']['elements'] = []
-        elements = self.input['mesh']['elements']
-
-        rel = self._absoluteToRelative(
-            np.array([boundingBox[0], boundingBox[1]]))
-
-        id = len(elements) + 1
-        elements.append({
-            "id": id,
-            "type": "cell",
-            "intervals": [
-                [rel[0].tolist(), rel[1, :].tolist()]
-            ]
-        })
-
-        return id
-
-    def addNodeElement(self, position):
-        ''' position is assumed to be in absolute coordinates.'''
-        if isinstance(position, list):
-            pos = np.array(position).reshape((1, 3))
-        elif isinstance(position, np.ndarray):
-            pos = position.reshape((1, 3))
-        else:
-            raise ValueError("Invalid type for position")
-        relative = self._absoluteToRelative(pos)
-
-        if 'mesh' not in self.input:
-            self.input['mesh'] = {}
-
-        if 'coordinates' not in self.input['mesh']:
-            self.input['mesh']['coordinates'] = []
-
-        coordId = len(self.input['mesh']['coordinates']) + 1
-        self.input['mesh']['coordinates'].append({
-            "id": coordId,
-            "relativePosition": relative[0].tolist()
-        })
-
-        if 'elements' not in self.input['mesh']:
-            self.input['mesh']['elements'] = []
-        elementId = len(self.input['mesh']['elements']) + 1
-        self.input['mesh']['elements'].append({
-            "id": elementId,
-            "type": "node",
-            "coordinateIds": [coordId]
-        })
-
-        return elementId
-
-    def addPECMaterial(self):
-        if 'materials' not in self.input:
-            self.input['materials'] = []
-
-        id = len(self.input['materials']) + 1
-        self.input['materials'].append({
-            "id": id,
-            "type": "pec",
-        })
-
-        return id
-
-    def addMaterialAssociation(self, materialId: int, elementIds: list):
-        if 'materials' not in self.input:
-            raise ValueError("No materials defined.")
-        if 'mesh' not in self.input:
-            raise ValueError("No mesh defined.")
-        if 'elements' not in self.input['mesh']:
-            raise ValueError("No elements defined.")
-        if len(elementIds) == 0:
-            raise ValueError("No elements to associate.")
-
-        if 'materialAssociations' not in self.input:
-            self.input['materialAssociations'] = []
-
-        self.input['materialAssociations'].append({
-            'materialId': materialId,
-            'elementIds': elementIds
-        })
-
-    def addPlanewaveSource(self, elementId, magnitudeFile, direction, polarization):
-        assert os.path.isfile(magnitudeFile)
-
-        if 'sources' not in self.input:
-            self.input['sources'] = []
-
-        self.input['sources'].append({
-            'type': 'planewave',
-            'magnitudeFile': magnitudeFile,
-            'elementIds': [elementId],
-            'direction': direction,
-            'polarization': polarization
-        })
-
-    def addPointProbe(self, elementId, name):
-        if 'probes' not in self.input:
-            self.input['probes'] = []
-
-        self.input['probes'].append({
-            "name": name,
-            "type": "point",
-            "elementIds": [elementId]
-        })
-
-    def addFarFieldProbe(self, elementId, name, theta, phi, domain):
-        if 'probes' not in self.input:
-            self.input['probes'] = []
-
-        self.input['probes'].append({
-            "name": name,
-            "type": "farField",
-            "elementIds": [elementId],
-            "theta": theta,
-            "phi": phi,
-            "domain": domain
-        })
-
-    def exportCase(self, case_name):
-        with open(case_name + '.fdtd.json', 'w') as f:
-            json.dump(self.input, f)
-
-    def _buildGridLines(self):
-        gridLines = []
-        grid = self.input['mesh']['grid']
-        index = 0
-        for x in ['x', 'y', 'z']:
-            newLines = np.cumsum(
-                np.insert(grid['steps'][x], 0, grid['origin'][index]))
-            index += 1
-            gridLines.append(newLines)
-        return gridLines
-
-    def _relativeToAbsolute(self, relativeCoordinates):
-        gridLines = self._buildGridLines()
-
-        res = np.empty_like(relativeCoordinates, dtype=float)
-        for x in range(3):
-            res[:, x] = gridLines[x][relativeCoordinates[:, x]]
-
-        return res
-
-    def _absoluteToRelative(self, absoluteCoordinates):
-        gridLines = self._buildGridLines()
-
-        res = np.empty_like(absoluteCoordinates, dtype=int)
-        for x in range(3):
-            for i in range(absoluteCoordinates.shape[0]):
-                array = gridLines[x]
-                value = absoluteCoordinates[i, x]
-                idx = np.searchsorted(array, value, side="left")
-                if idx > 0 and (idx == len(array) or np.abs(value - array[idx-1]) < np.abs(value - array[idx])):
-                    res[i, x] = idx-1
-                else:
-                    res[i, x] = idx
-
-        if np.any(absoluteCoordinates - self._relativeToAbsolute(res) > 1e-10):
-            raise ValueError(
-                "Error in conversion from absolute to relative coordinates.")
-
-        return res
-
-    def _getCellsIntervals(self, polyData):
-        relative = self._absoluteToRelative(
-            vtk_to_numpy(polyData.GetPoints().GetData()))
-
-        # Precounts
-        numberOfIntervals = 0
-        for i in range(polyData.GetNumberOfCells()):
-            cellType = polyData.GetCellType(i)
-            if cellType == vtk.VTK_QUAD or vtk.VTK_LINE:
-                numberOfIntervals += 1
-        res = [None] * numberOfIntervals
-
-        # Writes as list
-        c = 0
-        for i in range(polyData.GetNumberOfCells()):
-            cellType = polyData.GetCellType(i)
-            if cellType == vtk.VTK_QUAD:
-                p1 = polyData.GetCell(i).GetPointId(0)
-                p2 = polyData.GetCell(i).GetPointId(2)
-            elif cellType == vtk.VTK_LINE:
-                p1 = polyData.GetCell(i).GetPointId(0)
-                p2 = polyData.GetCell(i).GetPointId(1)
-            else:
-                continue
-            res[c] = [relative[p1].tolist(), relative[p2].tolist()]
-            c += 1
-
-        return res

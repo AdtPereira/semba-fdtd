@@ -39,7 +39,9 @@ venv/
 .vs
 build/
 build-*/
+build_test/
 
+CMakeUserPresets.json
 CMakeSettings.json
 /CppProperties.json
 
@@ -65,4 +67,13 @@ tmp/
 tmp_cases/
 testData/outputs/paul/paul_8.6_square.txt
 testing_hdf5_writing_and_reading.h5
+fort.17
 build
+build*/
+
+src_main_pub/version.F90
+git_info.txt
+
+.venv/build2/
+build2/
+.venv/

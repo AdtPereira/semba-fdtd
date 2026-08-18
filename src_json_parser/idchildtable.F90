@@ -1,10 +1,10 @@
-module idchildtable_mod
+module idchildtable_m
 
 #ifdef CompileWithSMBJSON    
    use json_module
-   use smbjson_labels_mod, only: J_ID
+   use smbjson_labels_m, only: J_ID
    use fhash, only: fhash_tbl_t, key=>fhash_key
-   use parser_tools_mod, only: json_value_ptr
+   use parser_tools_m, only: json_value_ptr_t
 
    type :: IdChildTable_t
       private
@@ -24,7 +24,7 @@ contains
    function ctor(core, root, path) result(res)
       type(json_core) :: core
       type(json_value), pointer :: root
-      character (len=*), intent(in) :: path
+      character(len=*), intent(in) :: path
       type(IdChildTable_t) :: res
       type(json_value), pointer :: jentries, jentry
       integer :: id
@@ -35,11 +35,11 @@ contains
       call core%get(root, path, jentries, found)
       if (.not. found) return
       numberOfEntries = core%count(jentries)
-      call res%idToChilds%allocate(10*numberOfEntries)
+      call res%idToChilds%allocate(13*numberOfEntries)
       do i = 1, numberOfEntries
          call core%get_child(jentries, i, jentry)
          call core%get(jentry, J_ID, id)
-         call res%idToChilds%set(key(id), json_value_ptr(jentry))
+         call res%idToChilds%set(key(id), json_value_ptr_t(jentry))
       end do
    end function
 
@@ -58,7 +58,7 @@ contains
 
    function getId(this, id) result(res)
       class(IdChildTable_t) :: this
-      type(json_value_ptr) :: res
+      type(json_value_ptr_t) :: res
       integer, intent(in) :: id
       integer :: mStat
       class(*), allocatable :: d
@@ -71,7 +71,7 @@ contains
 
       call this%idToChilds%get_raw(key(id), d)
       select type(d)
-       type is (json_value_ptr)
+       type is (json_value_ptr_t)
          res = d
       end select
    end function

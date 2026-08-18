@@ -2,10 +2,21 @@
 
 #ifdef CompileWithMTLN
     #include "mtln/mtln_tests.h"
+    //#include "system/system_tests.h"
 #endif
 #ifdef CompileWithSMBJSON
     #include "smbjson/smbjson_tests.h"
+    #include "rotate/rotate_tests.h"
+    #include "vtk/vtk_tests.h"
+    #include "wires/wires_tests.h"
 #endif
+#ifndef CompileWithMPI
+    #include "observation/observation_tests.h"
+#endif
+#include "conformal/conformal_tests.h"
+#include "preprocess/preprocess_tests.h"
+#include "healer/healer_tests.h"
+#include "sgbc/sgbc_tests.h"
 
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);

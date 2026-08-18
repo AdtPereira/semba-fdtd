@@ -19,16 +19,21 @@ option(SEMBA_FDTD_ENABLE_SMBJSON "Use smbjson" ON)
 option(SEMBA_FDTD_ENABLE_DOUBLE_PRECISION "Use double precision (CompileWithReal8)" OFF)
 
 option(SEMBA_FDTD_ENABLE_TEST "Compile tests" ON)
+option(SEMBA_FDTD_ENABLE_COVERAGE "Enable gcov coverage instrumentation (GNU only)" OFF)
 
 option(SEMBA_FDTD_ENABLE_INTEL_XHOST_OPTIMIZATION "When compiling in Release, enables the -xHost optimization flag (not supported in github actions)" OFF) 
-option(SEMBA_FDTD_ENABLE_INTEL_IPO "When compiling in Release, enables the interprocedural optimization" ON)
+option(SEMBA_FDTD_ENABLE_INTEL_IPO "When compiling in Release, enables the interprocedural optimization" OFF)
 
 option(SEMBA_FDTD_EXECUTABLE "Compiles executable" ON)
 option(SEMBA_FDTD_MAIN_LIB "Compiles main library" ON)
 option(SEMBA_FDTD_COMPONENTS_LIB "Compiles components library" ON)
 option(SEMBA_FDTD_OUTPUTS_LIB "Compiles outputs library" ON)
-
 # Compilation defines.
+if(CMAKE_BUILD_TYPE MATCHES "Release" OR CMAKE_BUILD_TYPE MATCHES "release" )
+	add_definitions(-DCompileWithRelease)
+else()
+	add_definitions(-DCompileWithDebug)
+endif()
 if(SEMBA_FDTD_ENABLE_SMBJSON)
 	add_definitions(-DCompileWithSMBJSON)
 endif()
@@ -44,9 +49,6 @@ add_definitions(
 	-DCompileWithInt2 
 	-DCompileWithOpenMP
 )
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-	add_definitions(-DCompileWithDebug)
-endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/set_precompiled_libraries.cmake")
 
@@ -62,8 +64,19 @@ if (CMAKE_SYSTEM_NAME MATCHES "Linux")
 		set(CMAKE_C_FLAGS_RELEASE "-Ofast")
 		set(CMAKE_CXX_FLAGS_RELEASE "-Ofast")
 		set(CMAKE_Fortran_FLAGS_RELEASE "-Ofast")
-		
-		set(CMAKE_Fortran_FLAGS_DEBUG "-g -O0")
+
+		set(CMAKE_C_FLAGS_DEBUG "-g -O0")
+		set(CMAKE_CXX_FLAGS_DEBUG "-g -O0")
+		set(CMAKE_Fortran_FLAGS_DEBUG "-g -O0 -fno-inline -fcheck=all -fbacktrace")
+
+		if(SEMBA_FDTD_ENABLE_COVERAGE)
+			message(STATUS "Enabling coverage instrumentation")
+			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} --coverage")
+			set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage")
+			set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} --coverage")
+			set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --coverage")
+			set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} --coverage")
+		endif()
 
 	elseif(CMAKE_Fortran_COMPILER_ID MATCHES "IntelLLVM")
 		message(STATUS "Using IntelLLVM (ifx) flags")
@@ -101,29 +114,11 @@ if (CMAKE_SYSTEM_NAME MATCHES "Linux")
 		
 		set(CMAKE_Fortran_FLAGS_DEBUG "-check all,nouninit -debug full -traceback")
 
-	elseif(CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
-		message(STATUS "Using Intel (ifort) flags")
-
-		set(CMAKE_C_FLAGS "-diag-disable=10441")
-		set(CMAKE_CXX_FLAGS "-qopenmp -diag-disable=10441")
-		set(CMAKE_Fortran_FLAGS "-fpp -qopenmp -diag-disable=8889 -static-intel")
-
-		set(CMAKE_C_FLAGS_RELEASE "-O3")
-		set(CMAKE_CXX_FLAGS_RELEASE "-O3")
-		set(CMAKE_Fortran_FLAGS_RELEASE "-O3")
-		set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
-		if(SEMBA_FDTD_ENABLE_INTEL_XHOST_OPTIMIZATION) 
-			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -xHost")
-			set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -xHost")
-			set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -xHost")
-		endif()
-
-		set(CMAKE_Fortran_FLAGS_DEBUG "-check all,nouninit -debug full -traceback")
+	
 	elseif(CMAKE_Fortran_COMPILER_ID MATCHES "NVHPC")
 		message(STATUS "Using nvhpc flags")
 		
 		# TODO: Tune flags for NVHPC
-
 	else()
 		message(FATAL_ERROR "Unrecognized compiler:" ${CMAKE_Fortran_COMPILER_ID})
 	endif()
@@ -134,28 +129,21 @@ elseif(CMAKE_SYSTEM_NAME MATCHES "Windows")
 
 		# This prevents a compilation error happening due to visual studio headers being too strict.
 		# It can possibly can be removed in the future.
-		add_compile_definitions("$<$<COMPILE_LANGUAGE:C,CXX>:-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH>")
+		#add_compile_definitions("$<$<COMPILE_LANGUAGE:C,CXX>:-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH>")
+		#add_compile_options($<$<COMPILE_LANGUAGE:Fortran>:/nofpp>)
+		#set(CMAKE_Fortran_FLAGS "/Qopenmp")
+		#set(CMAKE_CXX_FLAGS "/Qopenmp")
 
-		set(CMAKE_CXX_FLAGS "/Qopenmp")
-		set(CMAKE_Fortran_FLAGS "/Qopenmp /fpp")
-
-		# Not tested
-
-		# set(CMAKE_Fortran_FLAGS_RELEASE "/fast")
+		# Debug flags - enable full debugging support for breakpoints
+		set(CMAKE_Fortran_FLAGS_DEBUG "/debug:full /Od /traceback /check:all,nouninit /Zi /debug-parameters:all /warn:interfaces")
+		set(CMAKE_CXX_FLAGS_DEBUG "/Zi /Od /RTC1")
+		set(CMAKE_C_FLAGS_DEBUG "/Zi /Od /RTC1")
 		
-		set(CMAKE_CXX_FLAGS_FLAGS_DEBUG "/Qopenmp-simd- /Wno-debug-option-simd")
-		# set(CMAKE_Fortran_FLAGS_DEBUG "/check all,nouninit /debug full -traceback")
+		# Release flags
+		set(CMAKE_Fortran_FLAGS_RELEASE "/O3")
+		set(CMAKE_CXX_FLAGS_RELEASE "/O2")
+		set(CMAKE_C_FLAGS_RELEASE "/O2")
 
-	elseif((CMAKE_Fortran_COMPILER_ID MATCHES "Intel"))
-		message(STATUS "Using Intel (ifort) flags")
-		set(CMAKE_CXX_FLAGS "/Qopenmp")
-
-		# Not tested
-		# set(CMAKE_Fortran_FLAGS "/fpp /qopenmp") 
-
-		# set(CMAKE_Fortran_FLAGS_RELEASE "/fast")
-
-		# set(CMAKE_Fortran_FLAGS_DEBUG "/check all,nouninit /debug full -traceback")
 	else()
 		message(FATAL_ERROR "Unrecognized compiler id:" ${CMAKE_Fortran_COMPILER_ID})
 	endif()
@@ -163,12 +151,15 @@ else()
 	message(FATAL_ERROR "Unrecognized system name")
 endif()
 
+# =========================================
+
 add_subdirectory(external)
 
 add_library(semba-types 
 	"src_main_pub/nfde_types.F90"
 	"src_main_pub/fdetypes.F90"
 	"src_mtln/mtln_types.F90"
+	"src_conformal/conformal_types.F90"
 	"src_wires_pub/wires_types.F90"
 	"src_main_pub/lumped_types.F90"
 )
@@ -198,6 +189,9 @@ if (SEMBA_FDTD_ENABLE_MTLN)
 		set(MTLN_LIBRARIES mtlnsolver ngspice_interface PARENT_SCOPE)
 	endif()
 endif()
+
+add_subdirectory(src_conformal)
+set(CONFORMAL_LIBRARIES conformal)
 
 if (SEMBA_FDTD_ENABLE_TEST)
 	add_subdirectory(external/googletest/)
@@ -240,7 +234,18 @@ if(SEMBA_FDTD_OUTPUTS_LIB)
 endif()
 
 if(SEMBA_FDTD_MAIN_LIB)
+	# Prepares variables containing information on commit-hash and build flags.
+	# This information is only available at the configuration stage.
+	set(PROGRAM_NAME "semba-fdtd")
+	include("${CMAKE_CURRENT_SOURCE_DIR}/get_commit_info.cmake")
+	configure_file(
+	${CMAKE_SOURCE_DIR}/src_main_pub/version.F90.in
+	${CMAKE_SOURCE_DIR}/src_main_pub/version.F90
+	@ONLY
+	)
+
 	add_library(semba-main
+		"src_main_pub/semba_fdtd.F90"
 		"src_main_pub/calc_constants.F90"
 		"src_main_pub/nfde_rotate.F90"
 		"src_main_pub/EpsMuTimeScale.F90"
@@ -262,11 +267,12 @@ endif()
 
 if (SEMBA_FDTD_EXECUTABLE)
 	add_executable(semba-fdtd 
-		"src_main_pub/semba_fdtd.F90"
+		"src_main_pub/launcher.F90"
 	)
 	target_link_libraries(semba-fdtd semba-main semba-reports)
 	target_link_libraries(semba-fdtd ${MPI_Fortran_LIBRARIES})
 endif()
+
 
 
 include_directories(${CMAKE_BINARY_DIR}/mod)
