@@ -1,0 +1,42 @@
+=========================
+SEMBA-FDTD SOLVER
+=========================
+__________________________________________
+SEMBA-FDTD. Release build, compiled on: Jun 19 2025 10:32:31
+__________________________________________
+All rights reserved by the University of Granada (Spain)
+Contact person: Salvador G. Garcia <salva@ugr.es>
+
+__________________________________________
+Compiled WITH .h5 HDF support
+Compiled WITH MTLN support
+Compiled WITH SMBJSON support
+__________________________________________
+Launched on              20/06/2025 20:15
+Switches C:\git\semba-fdtd\build\bin\semba-fdtd.exe -i noda2002a.fdtd.json
+__________________________________________
+Closing warning file. Number of messages:            4
+__________________________________________
+Compiled with Single precision (real*4)
+__________________________________________
+Launched on              20/06/2025 20:15
+__________________________________________
+Launched with total options
+C:\git\semba-fdtd\build\bin\semba-fdtd.exe -i noda2002a.fdtd.json
+If later resuming use compulsory options
+mpirun -n    1
+__________________________________________
+INIT conversion internal ASCII => Binary
+__________________________________________
+__________________________________________
+__________________________________________
+CFLN=   0.3999999
+__________________________________________
+__________________________________________
+Deltat=   7.703330334729586E-011
+__________________________________________
+INIT NFDE --------> GEOM
+INIT UPDATING SHARED INFO. This process may take time!
+Launch with -noshared to skip this process (just relevant for structured NIBC CFCs and Anisot.)
+[OK] END UPDATING SHARED INFO
+(    1/    1) ERROR: noda2002.exc DOES NOT EXIST

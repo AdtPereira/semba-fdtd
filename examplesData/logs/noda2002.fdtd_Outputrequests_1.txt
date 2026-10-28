@@ -1,0 +1,6 @@
+noda2002.fdtd_Wire probe_Wz_10_10_1_s1.dat
+noda2002.fdtd_Wire probe001_Wz_10_10_3_s5.dat
+noda2002.fdtd_Wire probe002_Wz_10_10_2_s4.dat
+noda2002.fdtd_vprobe_LI_10_10_1.dat
+noda2002.fdtd_Bulk probe_Jz_9_9_1__10_10_1.dat
+!END 

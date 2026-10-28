@@ -1,0 +1,388 @@
+{
+    "_version": "0.16",
+    "_format": "Semba Data File in JSON format",
+    "analysis": {
+        "solver": "ugrfdtd",
+        "runSimulation": false,
+        "timeStep": 7.70333e-11,
+        "forceRestarting": false,
+        "resumeSimulation": false,
+        "flush": 0.0,
+        "compositesModel": "MIBC",
+        "wiresFlavor": "holland",
+        "mtln": false,
+        "minDistanceWires": 0.5,
+        "mesherOptions": {
+            "contourRefinement": false,
+            "unwantedConnectionsInfo": false,
+            "structuredCellsInfo": false,
+            "mesher": "DMesher",
+            "mode": "Structured",
+            "forbiddenLength": 0.25,
+            "slantedWires": false,
+            "vtkExport": true,
+            "postmshExport": false,
+            "postsmbExport": false,
+            "slantedThreshold": 0.25
+        },
+        "cfl": 0.8,
+        "mapVTK": false,
+        "geometryScalingFactor": 0.001,
+        "finalTime": 4e-08
+    },
+    "grids": [
+        {
+            "gridType": "rectilinear",
+            "xs": [
+                0.0,
+                100.0,
+                200.0,
+                300.00000000000006,
+                400.0,
+                500.0,
+                600.0,
+                700.0,
+                799.9999999999999,
+                899.9999999999999,
+                999.9999999999999,
+                1099.9999999999998,
+                1200.0,
+                1300.0,
+                1400.0000000000002,
+                1500.0000000000002,
+                1600.0000000000002,
+                1700.0000000000005,
+                1800.0000000000005,
+                1900.0000000000007,
+                2000.0
+            ],
+            "ys": [
+                0.0,
+                100.0,
+                200.0,
+                300.00000000000006,
+                400.0,
+                500.0,
+                600.0,
+                700.0,
+                799.9999999999999,
+                899.9999999999999,
+                999.9999999999999,
+                1099.9999999999998,
+                1200.0,
+                1300.0,
+                1400.0000000000002,
+                1500.0000000000002,
+                1600.0000000000002,
+                1700.0000000000005,
+                1800.0000000000005,
+                1900.0000000000007,
+                2000.0000000000005,
+                2100.0000000000005,
+                2200.0000000000005,
+                2300.000000000001,
+                2400.000000000001,
+                2500.000000000001,
+                2600.000000000001,
+                2700.000000000001,
+                2800.0000000000014,
+                2900.0000000000014,
+                3000.0000000000014,
+                3100.0000000000014,
+                3200.0000000000014,
+                3300.000000000002,
+                3400.000000000002,
+                3500.000000000002,
+                3600.000000000002,
+                3700.000000000002,
+                3800.000000000002,
+                3900.0000000000023,
+                4000.000000000002,
+                4100.000000000002,
+                4200.000000000001,
+                4300.000000000001,
+                4400.0,
+                4500.0,
+                4600.0,
+                4699.999999999999,
+                4799.999999999999,
+                4899.999999999998,
+                4999.999999999998,
+                5099.999999999998,
+                5199.999999999997,
+                5299.999999999997,
+                5399.999999999996,
+                5499.999999999996,
+                5599.999999999996,
+                5699.999999999995,
+                5799.999999999995,
+                5899.999999999995,
+                6000.0
+            ],
+            "zs": [
+                0.0,
+                100.0,
+                200.0,
+                300.00000000000006,
+                400.0,
+                500.0,
+                600.0,
+                700.0,
+                799.9999999999999,
+                899.9999999999999,
+                999.9999999999999,
+                1099.9999999999998,
+                1200.0,
+                1300.0,
+                1400.0000000000002,
+                1500.0000000000002,
+                1600.0000000000002,
+                1700.0000000000005,
+                1800.0000000000005,
+                1900.0000000000007,
+                2000.0
+            ]
+        }
+    ],
+    "model": {
+        "layers": [
+            {
+                "id": 1,
+                "name": "Horizontal Line"
+            },
+            {
+                "id": 2,
+                "name": "Lead Wire"
+            },
+            {
+                "id": 3,
+                "name": "Cube"
+            },
+            {
+                "id": 4,
+                "name": "Bulk001"
+            }
+        ],
+        "materials": [
+            {
+                "materialId": 1,
+                "name": "IsotropicMaterial",
+                "materialType": "Classic",
+                "permittivity": 1.0,
+                "permeability": 1.0,
+                "electricConductivity": 59171597.0,
+                "magneticConductivity": 0.0
+            },
+            {
+                "materialId": 2,
+                "name": "LeadWirematerial",
+                "materialType": "Wire",
+                "wireType": "Standard",
+                "radius": 0.0066,
+                "resistance": 0.0,
+                "inductance": 0.0
+            },
+            {
+                "materialId": 3,
+                "name": "HorizontalWirematerial",
+                "materialType": "Wire",
+                "wireType": "Standard",
+                "radius": 0.01,
+                "resistance": 0.0,
+                "inductance": 0.0
+            },
+            {
+                "materialId": 4,
+                "name": "Terminal50Ohm",
+                "materialType": "Connector",
+                "connectorType": "Conn_sRLC",
+                "resistance": 50.0,
+                "inductance": 0.0,
+                "capacitance": 1e+22
+            },
+            {
+                "name": "Short",
+                "materialType": "Connector",
+                "connectorType": "Conn_short",
+                "materialId": 5
+            },
+            {
+                "name": "Open",
+                "materialType": "Connector",
+                "connectorType": "Conn_open",
+                "materialId": 6
+            }
+        ],
+        "coordinates": [
+            "      1  +1.00000000e+03  +1.00000000e+03  +6.00000000e+02",
+            "      2  +1.00000000e+03  +5.00000000e+03  +6.00000000e+02",
+            "      3  +1.00000000e+03  +1.00000000e+03  +1.00000000e+02",
+            "      4  +1.00000000e+03  +1.00000000e+03  +1.50000000e+02",
+            "      5  +1.00000000e+03  +1.00000000e+03  +2.00000000e+02",
+            "      6  +1.00000000e+03  +1.00000000e+03  +2.50000000e+02",
+            "      7  +1.00000000e+03  +1.00000000e+03  +3.00000000e+02",
+            "      8  +1.00000000e+03  +1.00000000e+03  +3.50000000e+02",
+            "      9  +1.00000000e+03  +1.00000000e+03  +4.00000000e+02",
+            "      10  +1.00000000e+03  +1.00000000e+03  +4.50000000e+02",
+            "      11  +1.00000000e+03  +1.00000000e+03  +5.00000000e+02",
+            "      12  +1.00000000e+03  +1.00000000e+03  +5.50000000e+02",
+            "      13  +1.00000000e+03  +1.00000000e+03  +6.00000000e+02",
+            "      14  +0.00000000e+00  +0.00000000e+00  +0.00000000e+00",
+            "      15  +0.00000000e+00  +0.00000000e+00  +1.00000000e+02",
+            "      16  +0.00000000e+00  +6.00000000e+03  +0.00000000e+00",
+            "      17  +0.00000000e+00  +6.00000000e+03  +1.00000000e+02",
+            "      18  +2.00000000e+03  +0.00000000e+00  +1.00000000e+02",
+            "      19  +2.00000000e+03  +0.00000000e+00  +0.00000000e+00",
+            "      20  +2.00000000e+03  +6.00000000e+03  +0.00000000e+00",
+            "      21  +2.00000000e+03  +6.00000000e+03  +1.00000000e+02",
+            "      22  +1.10000000e+03  +1.10000000e+03  +1.00000000e+02",
+            "      23  +9.00000000e+02  +1.10000000e+03  +1.00000000e+02",
+            "      24  +9.00000000e+02  +9.00000000e+02  +1.00000000e+02",
+            "      25  +1.10000000e+03  +9.00000000e+02  +1.00000000e+02"
+        ],
+        "elements": {
+            "node": [
+                "       17    0    0        3",
+                "       18    0    0        3",
+                "       19    0    0        7",
+                "       20    0    0        5",
+                "       21    4    2        3",
+                "       22    5    2        13",
+                "       23    5    1        1",
+                "       24    6    1        2"
+            ],
+            "line": [
+                "       1    3    1        1        2"
+            ],
+            "polyline": [
+                "       2    2    2        3        4        5        6        7        8        9        10        11        12        13"
+            ],
+            "triangle": [
+                "       3    1    3        14        15        16",
+                "       4    1    3        16        15        17",
+                "       5    1    3        18        19        20",
+                "       6    1    3        18        20        21",
+                "       7    1    3        19        18        14",
+                "       8    1    3        14        18        15",
+                "       9    1    3        21        20        16",
+                "       10    1    3        21        16        17",
+                "       11    1    3        16        20        14",
+                "       12    1    3        14        20        19",
+                "       13    1    3        21        17        15",
+                "       14    1    3        21        15        18",
+                "       15    0    4        22        23        24",
+                "       16    0    4        22        24        25"
+            ]
+        },
+        "junctions": [
+            {
+                "name": "Junction",
+                "unitedCoordIds": [
+                    [
+                        13,
+                        1
+                    ]
+                ]
+            }
+        ],
+        "cables": [
+            {
+                "name": "Lead Cable",
+                "materialId": 2,
+                "initialConnectorId": 4,
+                "endConnectorId": 5,
+                "elemIds": [
+                    2
+                ]
+            },
+            {
+                "name": "Horizontal Cable",
+                "materialId": 3,
+                "initialConnectorId": 5,
+                "endConnectorId": 6,
+                "elemIds": [
+                    1
+                ]
+            }
+        ]
+    },
+    "sources": [
+        {
+            "sourceType": "generator",
+            "type": "voltage",
+            "elemIds": [
+                17
+            ],
+            "magnitude": {
+                "type": "File",
+                "filename": "C:\\git\\semba-fdtd\\examplesData\\excitations\\noda2002.exc"
+            }
+        }
+    ],
+    "probes": [
+        {
+            "gidOutputType": "OutRq_on_point",
+            "name": "Wire probe",
+            "type": "current",
+            "domain": {
+                "initialTime": 0.0,
+                "finalTime": 0.0,
+                "samplingPeriod": 0.0
+            },
+            "elemIds": [
+                18
+            ]
+        },
+        {
+            "gidOutputType": "OutRq_on_point",
+            "name": "Wire probe001",
+            "type": "current",
+            "domain": {
+                "initialTime": 0.0,
+                "finalTime": 0.0,
+                "samplingPeriod": 0.0
+            },
+            "elemIds": [
+                19
+            ]
+        },
+        {
+            "gidOutputType": "OutRq_on_point",
+            "name": "Wire probe002",
+            "type": "current",
+            "domain": {
+                "initialTime": 0.0,
+                "finalTime": 0.0,
+                "samplingPeriod": 0.0
+            },
+            "elemIds": [
+                20
+            ]
+        },
+        {
+            "name": "Bulk probe",
+            "direction": "x",
+            "type": "bulkCurrentElectric",
+            "gidOutputType": "OutRq_on_layer",
+            "box": "{1100.0 1100.0 100.0 900.0 900.0 100.0}",
+            "skip": 1,
+            "domain": {
+                "initialTime": 0.0,
+                "finalTime": 0.0,
+                "samplingPeriod": 0.0
+            }
+        }
+    ],
+    "boundary": {
+        "lower": [
+            "PML",
+            "PML",
+            "PML"
+        ],
+        "upper": [
+            "PML",
+            "PML",
+            "PML"
+        ]
+    }
+}
