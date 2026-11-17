@@ -8,3 +8,12 @@
 *.xdmf
 *.bin
 fort.17
+
+#velectra
+*.cm
+*.npz
+*.FCStd
+*.FCBak
+spinit
+*.png
+*.csv
