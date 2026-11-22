@@ -8,12 +8,17 @@ import numpy as np
 
 C0 = 299792458.0
 ETA0 = 376.730313668
-R_EFF_FACTOR = 0.75        # MTLN/Holland thin wires behave as if r = 0.75 r_w (as in Paul D.28)
 CFLN = 0.8                 # semba-fdtd corrects the time step to CFLN * dx / (c sqrt(3))
 trapz = getattr(np, "trapezoid", None) or np.trapz
 
-# What the tutorial (claude/crosstalk_fdtd_tutorial_ABC_EN.md) asks for; deviations are reported, not fatal.
-EXPECTED = dict(height=0.035, length=2.0, radius=0.5e-3, dx=5e-3, cells=[168, 88, 400])
+# What the case asks for; deviations are reported, not fatal. Geometry of case A: h = 100 mm (wire at j = 24, plane at
+# j = 4, 20 cells apart), L = 2 m, r = 0.5 mm, dx = 5 mm, box 168 x 88 x 400 cells with a PML on x and y.
+EXPECTED = dict(length=2.0, radius=0.5e-3, dx=5e-3)      # common to every case folder; height, grid and terminals come from each JSON
+
+
+def zc_wire_plane(h, r):
+    """Characteristic impedance of one round wire of radius r at height h over a PEC plane (exact image formula)."""
+    return ETA0 / (2 * math.pi) * math.acosh(h / r)
 
 
 def solver_time_plan(dt_json, n_json, dx, dy=None, dz=None):

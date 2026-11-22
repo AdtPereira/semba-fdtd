@@ -1,0 +1,229 @@
+{
+  "_format": "FDTD Input file",
+  "general": {
+    "timeStep": 7.7033e-12,
+    "numberOfSteps": 6490,
+    "additionalArguments": ""
+  },
+  "boundary": {
+    "xLower": {
+      "type": "pml"
+    },
+    "xUpper": {
+      "type": "pml"
+    },
+    "yLower": {
+      "type": "pml"
+    },
+    "yUpper": {
+      "type": "pml"
+    },
+    "zLower": {
+      "type": "pec"
+    },
+    "zUpper": {
+      "type": "pec"
+    }
+  },
+  "materials": [
+    {
+      "name": "PEC",
+      "id": 1,
+      "type": "pec"
+    },
+    {
+      "name": "Wire_material",
+      "id": 2,
+      "radius": 0.0005,
+      "resistancePerMeter": 0.0,
+      "inductancePerMeter": 0.0,
+      "type": "wire"
+    },
+    {
+      "name": "Terminal50ohm",
+      "id": 3,
+      "type": "terminal",
+      "terminations": [
+        {
+          "type": "series",
+          "resistance": 50.0,
+          "capacitance": 1e+22
+        }
+      ]
+    },
+    {
+      "name": "Terminal296ohm",
+      "id": 4,
+      "type": "terminal",
+      "terminations": [
+        {
+          "type": "series",
+          "resistance": 296.0,
+          "capacitance": 1e+22
+        }
+      ]
+    },
+    {
+      "name": "Terminal296ohm",
+      "id": 5,
+      "type": "terminal",
+      "terminations": [
+        {
+          "type": "series",
+          "resistance": 296.29,
+          "capacitance": 1e+22
+        }
+      ]
+    }
+  ],
+  "materialAssociations": [
+    {
+      "materialId": 1,
+      "elementIds": [
+        3
+      ]
+    },
+    {
+      "name": "Cable1",
+      "materialId": 2,
+      "initialTerminalId": 5,
+      "endTerminalId": 5,
+      "type": "cable",
+      "elementIds": [
+        1
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "name": "Generator",
+      "type": "generator",
+      "magnitudeFile": "gauss_sigma2p5ns_t15ns.exc",
+      "elementIds": [
+        2
+      ],
+      "field": "voltage"
+    }
+  ],
+  "probes": [
+    {
+      "name": "Wire probe001",
+      "type": "wire",
+      "field": "current",
+      "elementIds": [
+        4
+      ],
+      "domain": {
+        "type": "time"
+      }
+    },
+    {
+      "name": "Wire probe002",
+      "type": "wire",
+      "field": "current",
+      "elementIds": [
+        5
+      ],
+      "domain": {
+        "type": "time"
+      }
+    }
+  ],
+  "mesh": {
+    "grid": {
+      "numberOfCells": [
+        168,
+        88,
+        400
+      ],
+      "steps": {
+        "x": [
+          0.005
+        ],
+        "y": [
+          0.005
+        ],
+        "z": [
+          0.005
+        ]
+      },
+      "origin": [
+        -0.42,
+        -0.42,
+        0.0
+      ]
+    },
+    "coordinates": [
+      {
+        "id": 1,
+        "relativePosition": [
+          77,
+          11,
+          0
+        ]
+      },
+      {
+        "id": 2,
+        "relativePosition": [
+          77,
+          11,
+          400
+        ]
+      }
+    ],
+    "elements": [
+      {
+        "id": 1,
+        "name": "Agressor_model",
+        "type": "polyline",
+        "coordinateIds": [
+          1,
+          2
+        ]
+      },
+      {
+        "id": 2,
+        "name": "Generator",
+        "type": "node",
+        "coordinateIds": [
+          1
+        ]
+      },
+      {
+        "id": 3,
+        "name": "Plane",
+        "type": "cell",
+        "intervals": [
+          [
+            [
+              168,
+              4,
+              400
+            ],
+            [
+              0,
+              4,
+              0
+            ]
+          ]
+        ]
+      },
+      {
+        "id": 4,
+        "name": "Wire_probe001",
+        "type": "node",
+        "coordinateIds": [
+          1
+        ]
+      },
+      {
+        "id": 5,
+        "name": "Wire_probe002",
+        "type": "node",
+        "coordinateIds": [
+          2
+        ]
+      }
+    ]
+  }
+}

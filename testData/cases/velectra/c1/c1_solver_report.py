@@ -6,15 +6,50 @@ import numpy as np
 from c1_common import find_file
 
 
-def energy_check(root, log):
+def energy_check(root, log, min_db=60.0):
     f_en = find_file(root, "*Energy.dat")
     if f_en is None:
         return
     en = np.atleast_2d(np.loadtxt(f_en))
-    if len(en) > 3:
+    # Energy.dat has one row per solver report (about every 60 s of wall time): a 3.5 min run leaves only 3 rows, the
+    # last one well before the end of the window, so min_db must be lowered for short runs (c1.py passes 30).
+    if len(en) >= 2:
         dec = 10 * np.log10(en[:, 1].max() / en[-1, 1])
-        log.info("energy", f"decays {dec:.1f} dB from its maximum to the last report (10 log10: energy is quadratic)")
-        log.check(dec > 60, "energy decays by more than 60 dB (absorbed by the terminals)", f"{dec:.1f} dB", "WARN")
+        log.info("energy", f"{len(en)} reports, last at {en[-1, 0] * 1e9:.1f} ns; decays {dec:.1f} dB from its "
+                           f"maximum to the last report (10 log10: energy is quadratic)")
+        log.check(dec > min_db, f"energy decays by more than {min_db:g} dB (absorbed by the terminals)",
+                  f"{dec:.1f} dB", "WARN")
+    else:
+        log.info("energy", "fewer than 2 reports in Energy.dat: decay not checked")
+
+
+def border_check(root, bnd_xy, log):
+    """The Report must list the absorbing borders that the JSON asks for (a misspelt type is ignored without an error)."""
+    f_rep = find_file(root, "*Report.txt")
+    if f_rep is None or not bnd_xy:
+        return
+    rep = f_rep.read_text(errors="ignore")
+    kinds = {v.lower() for v in bnd_xy.values()}
+    want_pml, want_mur = "pml" in kinds, "mur" in kinds
+    has_pml = re.search(r"there are CPML Borders", rep) is not None
+    has_mur = re.search(r"there are Mur Borders", rep) is not None
+    log.check((not want_pml or has_pml) and (not want_mur or has_mur),
+              "the Report lists the absorbing borders requested in the JSON",
+              f"JSON asks {sorted(set(bnd_xy.values()))}; Report: CPML {'yes' if has_pml else 'NO'}, "
+              f"Mur {'yes' if has_mur else 'NO'}")
+
+
+def warnings_check(root, log):
+    """Solver warnings written next to the case; the MTLN symlink warning for the .exc file is known and harmless."""
+    f_w = find_file(root, "*Warnings.txt")
+    if f_w is None:
+        return
+    lines = [ln.strip() for ln in f_w.read_text(errors="ignore").splitlines() if "WARN" in ln or "ERROR" in ln]
+    benign = [ln for ln in lines if "create_symlink" in ln]
+    other = [ln for ln in lines if ln not in benign]
+    if benign:
+        log.info("solver warnings", f"{len(benign)} known harmless (create_symlink of the .exc onto itself)")
+    log.check(not other, "no solver warnings other than the known one", "; ".join(other[:3]), "WARN")
 
 
 def report_check(root, dt_solver, log):

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from c1_common import C0, ETA0, EXPECTED, R_EFF_FACTOR, find_file, solver_time_plan
+from c1_common import C0, ETA0, EXPECTED, find_file, solver_time_plan, zc_wire_plane
 
 
 def load_case(here, case_name, log):
@@ -16,6 +16,7 @@ def load_case(here, case_name, log):
     os.chdir(work)                                   # semba-fdtd runs and writes its outputs here
     inp = json.loads(case_path.read_text())
     c = SimpleNamespace(case_path=case_path, WORK=work, inp=inp, HERE=here)
+    log.info("case folder", str(work))
     _geometry(c, log)
     _boundaries_and_sources(c, log)
     _excitation(c, log)
@@ -46,8 +47,8 @@ def _geometry(c, log):
     c.dx, c.ncell = d, grid["numberOfCells"]
     log.check(grid["steps"]["y"][0] == d and grid["steps"]["z"][0] == d, "cubic cells", f"dx = {d * 1e3:g} mm")
     origin, ncell = grid["origin"], grid["numberOfCells"]
-    log.check(abs(d - EXPECTED["dx"]) < 1e-12 and list(ncell) == EXPECTED["cells"], "grid as in the tutorial",
-              f"dx = {d * 1e3:g} mm, cells = {ncell}", "WARN")
+    log.check(abs(d - EXPECTED["dx"]) < 1e-12, "cell size as expected (c1_common.EXPECTED)", f"dx = {d * 1e3:g} mm", "WARN")
+    log.info("grid", f"{ncell[0]} x {ncell[1]} x {ncell[2]} cells = {ncell[0] * ncell[1] * ncell[2] / 1e6:.2f} Mcells (before the PML layers)")
 
     poly = next(e for e in elements.values() if e["type"] == "polyline")
     p0, p1 = (coords[k] for k in poly["coordinateIds"])
@@ -63,11 +64,16 @@ def _geometry(c, log):
     span_ok = (min(plane[0][0][0], plane[0][1][0]) == 0 and max(plane[0][0][0], plane[0][1][0]) == ncell[0]
                and min(plane[0][0][2], plane[0][1][2]) == 0 and max(plane[0][0][2], plane[0][1][2]) == ncell[2])
     log.check(span_ok, "plane spans the whole grid in x and z", f"{plane[0]} (grid {ncell})")
-    log.check(abs(c.h - EXPECTED["height"]) < 1e-9 and abs(c.length - EXPECTED["length"]) < 1e-9
-              and abs(c.radius - EXPECTED["radius"]) < 1e-12, "wire as in the tutorial",
-              f"h = {c.h * 1e3:g} mm, L = {c.length:g} m, r = {c.radius * 1e3:g} mm", "WARN")
+    log.check(abs(c.length - EXPECTED["length"]) < 1e-9 and abs(c.radius - EXPECTED["radius"]) < 1e-12,
+              "wire length and radius as expected (c1_common.EXPECTED)",
+              f"L = {c.length:g} m, r = {c.radius * 1e3:g} mm (height h = {c.h * 1e3:g} mm is read from the JSON)", "WARN")
     log.check(c.radius / d <= 0.11, "wire radius / dx below the thin-wire stability limit 0.11",
               f"r/dx = {c.radius / d:.3f}")
+    # clearance of the wire to the lateral / top boundaries, in units of h (the quasi-static fringing field of a wire
+    # over a plane reaches several h; an absorbing boundary closer than that can bias Zc_eff)
+    c.clear = dict(x_low=p0[0] * d, x_high=(ncell[0] - p0[0]) * d, y_high=(ncell[1] - p0[1]) * d)
+    log.info("clearance wire -> boundary", ", ".join(f"{k} = {v * 1e3:.0f} mm ({v / c.h:.1f} h)"
+                                                      for k, v in c.clear.items()))
 
 
 def _boundaries_and_sources(c, log):
@@ -75,6 +81,14 @@ def _boundaries_and_sources(c, log):
     bnd = inp["boundary"]
     log.check(bnd["zLower"]["type"] == "pec" and bnd["zUpper"]["type"] == "pec",
               "z faces are PEC (end walls: wire ends sit on them)", f"{bnd['zLower']['type']}/{bnd['zUpper']['type']}")
+    c.bnd_xy = {k: bnd[k]["type"] for k in ("xLower", "xUpper", "yLower", "yUpper")}
+    # semba-fdtd (smbjson.F90, labelToBoundaryType) matches the type with a case-sensitive `select case`: "PML" or
+    # "Pml" is silently not recognised and the face is NOT absorbing (the Report then says "no CPML Borders found").
+    log.check(all(v in ("mur", "pml") for v in c.bnd_xy.values()),
+              "x/y faces are open: exactly lowercase 'mur' or 'pml' (other spellings are ignored by the solver)",
+              f"{c.bnd_xy}")
+    log.info("x/y boundary type", "/".join(sorted(set(c.bnd_xy.values()))) +
+             " (keep the same type in A, B and C for comparable results)")
     gen = inp["sources"][0]
     c.gen = gen
     gen_k = coords[elements[gen["elementIds"][0]]["coordinateIds"][0]][2]
@@ -124,18 +138,24 @@ def _time_and_references(c, log):
     c.dt_solver = plan.dt_limit                                  # largest dt semba-fdtd accepts without correcting it
     c.window_need = c.t0 + 2 * c.T + 4 * c.sigma     # pulse + one round trip + tail: the first echo is complete
     log.check(not plan.corrected, "timeStep within the solver limit",
-              f"json {dt_json:.3e} s, limit {plan.dt_limit:.3e} s (0.8 dt_CFL); semba-fdtd will correct dt to "
-              f"{plan.dt:.3e} s and run {plan.n_final} steps = {plan.t_final * 1e9:.4f} ns "
-              f"(json: {n_json} steps = {window_json * 1e9:.4f} ns)", "WARN")
+              f"json {dt_json:.4e} s, limit {plan.dt_limit:.4e} s (0.8 dt_CFL); "
+              + (f"semba-fdtd will correct dt to {plan.dt:.4e} s and run {plan.n_final} steps = "
+                 f"{plan.t_final * 1e9:.4f} ns (json: {n_json} steps = {window_json * 1e9:.4f} ns)"
+                 if plan.corrected else f"kept: {n_json} steps = {window_json * 1e9:.4f} ns"), "WARN")
     log.check(window_json >= c.window_need, "simulated window holds the first echo",
               f"{window_json * 1e9:.1f} ns, needed {c.window_need * 1e9:.1f} ns")
 
-    zc = lambda r: ETA0 / (2 * math.pi) * math.acosh(c.h / r)
-    c.Zc_r, c.Zc_reff = zc(c.radius), zc(R_EFF_FACTOR * c.radius)
+    c.Zc_r = zc_wire_plane(c.h, c.radius)                        # analytic Zc with the PHYSICAL radius
     log.info("input", f"R_S = {c.R_S:g} ohm, R_L = {c.R_L:g} ohm, h = {c.h * 1e3:g} mm, L = {c.length:g} m, "
                       f"r = {c.radius * 1e3:g} mm, T = {c.T * 1e9:.3f} ns")
-    log.info("analytic Zc", f"{c.Zc_r:.1f} ohm (radius r), {c.Zc_reff:.1f} ohm "
-                            f"(r_eff = {R_EFF_FACTOR} r, expected in FDTD)")
-    log.check(abs(c.R_S - c.Zc_reff) / c.Zc_reff < 0.02 and abs(c.R_L - c.Zc_reff) / c.Zc_reff < 0.02,
-              "terminals match Zc_eff within 2 % (otherwise a resistive echo appears)",
-              f"R_S = {c.R_S:g}, R_L = {c.R_L:g}, Zc_eff = {c.Zc_reff:.1f}", "WARN")
+    log.info("analytic Zc (physical radius)", f"{c.Zc_r:.1f} ohm = eta0/(2 pi) acosh(h/r)")
+    gam = lambda r: (r - c.Zc_r) / (r + c.Zc_r)
+    if abs(c.R_S - c.Zc_r) / c.Zc_r < 0.02 and abs(c.R_L - c.Zc_r) / c.Zc_r < 0.02:
+        log.check(True, "terminals equal the analytic Zc of the physical radius within 2 % (the analytic line is then matched)",
+                  f"R_S = {c.R_S:g}, R_L = {c.R_L:g}, Zc = {c.Zc_r:.1f} ohm")
+    else:
+        log.info("terminals vs analytic Zc (physical radius)",
+                 f"R_S = {c.R_S:g}, R_L = {c.R_L:g}, Zc = {c.Zc_r:.1f} ohm: the analytic line is NOT matched "
+                 f"(Gamma_S = {gam(c.R_S):+.3f}, Gamma_L = {gam(c.R_L):+.3f}); it has its own echoes, which the comparison includes")
+    log.info("terminals as modelled", "kept as they are: the solver is not told to match its own wire; any mismatch "
+                                      "seen in the results is part of the semba-fdtd answer")

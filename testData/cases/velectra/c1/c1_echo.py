@@ -1,9 +1,9 @@
-"""First echo at the near end: resistive part (monopole) and reactive part (doublet), plus late-time residual.
+"""First echo at the near end and late-time residual of the semba-fdtd currents.
 
-echo(t) = alpha * i_main(t - 2T) + beta * d/dt i_main(t - 2T),   i_main = incident pulse as seen by the probe
-alpha = -Gamma_L (resistive mismatch); beta = Zc*C/2 (shunt C at the far end) or -L/(2 Zc) (series L)
+The analytic line of case A is matched (no echo), so the echo of semba-fdtd is the signature of the mismatch between the
+terminals and the wire as semba-fdtd models it. It is measured, not fitted: residual = I_near - (main pulse), main pulse =
+the source scaled to the first-pass peak.
 """
-import math
 from types import SimpleNamespace
 
 import numpy as np
@@ -11,35 +11,32 @@ import numpy as np
 
 def echo_analysis(case, cal, t, I_n, I_f, log):
     c = case
-    t_echo = c.t0 + cal.delay * 2                    # centre of the echo (round trip measured from the peaks)
+    t_echo = c.t0 + cal.delay * 2                    # centre of the echo (round trip measured from the pulse centres)
     i_main = cal.Ip_n * c.source(t) / c.s_pk
     resid = I_n - i_main
+    gam_l = (c.R_L - c.Zc_r) / (c.R_L + c.Zc_r)       # analytic line: the echo at the near end is -Gamma_L of the main pulse
+    an_echo = "none (matched)" if abs(gam_l) < 0.005 else f"{-100 * gam_l:+.2f} % of the main peak (Gamma_L = {gam_l:+.3f})"
+    # Shape of the near-end current before the echo can return: resid ~ C_eq dV_S/dt (a small shunt capacitance at the line input).
+    dV = np.gradient(c.source(t), t)                 # source voltage, V (peak 1 V), so the fitted coefficient is a capacitance (F)
+    fit_win = (t > c.t0 - 5 * c.sigma) & (t < t_echo - 3 * c.sigma)
+    if fit_win.sum() > 20:
+        c_eq = float(np.sum(resid[fit_win] * dV[fit_win]) / np.sum(dV[fit_win] ** 2))
+        rms = lambda x: float(np.sqrt(np.mean(x ** 2)))
+        before, after = rms(resid[fit_win]), rms(resid[fit_win] - c_eq * dV[fit_win])
+        log.info("near-end shape before the echo (residual ~ C dV_S/dt)",
+                 f"C = {c_eq * 1e15:.1f} fF; RMS of the residual {100 * before / cal.Ip_n:.3f} % -> {100 * after / cal.Ip_n:.3f} % of the peak "
+                 f"after removing it, window {1e9 * t[fit_win][0]:.1f} to {1e9 * t[fit_win][-1]:.1f} ns (a fit, not a model)")
+    else:
+        c_eq = 0.0
     win = (t > t_echo - 4 * c.sigma) & (t < min(t_echo + 4 * c.sigma, t[-1]))
-    alpha = beta = None
-    fit = np.zeros_like(t)
     if win.sum() > 20 and t[-1] > t_echo + 2 * c.sigma:
-        m = np.interp(t - 2 * cal.delay, t, i_main, left=0.0, right=0.0)
-        dm = np.gradient(m, t)
-        A = np.column_stack([m[win], dm[win]])
-        (alpha, beta), *_ = np.linalg.lstsq(A, resid[win], rcond=None)
-        fit = alpha * m + beta * dm
-        rms_fit = math.sqrt(np.mean((resid[win] - fit[win]) ** 2)) / cal.Ip_n
-        reactive = (f"shunt C = {2 * beta / cal.Zc_meas * 1e12:.2f} pF" if beta > 0
-                    else f"series L = {-2 * beta * cal.Zc_meas * 1e9:.2f} nH")
-        g100 = 2 * math.pi * 1e8 * abs(beta)         # |Gamma| of the reactive part at 100 MHz
-        log.info("echo (residual after the main pulse)",
-                 f"max {resid[win].max() * 1e3:+.4f} mA ({100 * resid[win].max() / cal.Ip_n:+.2f} %), "
-                 f"min {resid[win].min() * 1e3:+.4f} mA ({100 * resid[win].min() / cal.Ip_n:+.2f} %); "
-                 f"peak {20 * np.log10(abs(resid[win]).max() / cal.Ip_n):.1f} dB re main peak")
-        log.info("echo fit", f"resistive alpha = {alpha * 100:+.2f} % of the pulse "
-                             f"(-Gamma_L = {-cal.Gamma_pred * 100:+.2f} %), reactive beta = {beta * 1e12:+.1f} ps "
-                             f"-> {reactive}; |Gamma| at 100 MHz ~ {g100 * 100:.1f} %; "
-                             f"fit error {rms_fit * 100:.2f} % of peak")
-        log.check(abs(alpha + cal.Gamma_pred) < 0.005, "resistive echo equals -Gamma_L within 0.5 point",
-                  f"{alpha * 100:+.2f} % vs {-cal.Gamma_pred * 100:+.2f} %")
-        log.check(g100 < 0.05, "reactive end effect below 5 % reflection at 100 MHz", f"{g100 * 100:.1f} %", "WARN")
-        log.check(rms_fit < 0.003, "echo explained by monopole + doublet (fit error below 0.3 % of peak)",
-                  f"{rms_fit * 100:.2f} %", "WARN")
+        mx, mn = resid[win].max(), resid[win].min()
+        log.info("near-end echo (residual after the main pulse)",
+                 f"max {mx * 1e3:+.4f} mA ({100 * mx / cal.Ip_n:+.2f} %), min {mn * 1e3:+.4f} mA "
+                 f"({100 * mn / cal.Ip_n:+.2f} %); peak {20 * np.log10(abs(resid[win]).max() / cal.Ip_n):.1f} dB re main peak; "
+                 f"analytic line: {an_echo}")
+        log.check(abs(resid[win]).max() / cal.Ip_n < 0.10, "near-end echo below 10 % of the main peak",
+                  f"{100 * abs(resid[win]).max() / cal.Ip_n:.2f} %", "WARN")
     else:
         log.info("echo", "window too short for the echo analysis")
 
@@ -50,4 +47,4 @@ def echo_analysis(case, cal, t, I_n, I_f, log):
         log.info("late-time residual (after the echo)", f"near {late_n:.1f} dB, far {late_f:.1f} dB re peak")
         log.check(late_n < -40 and late_f < -40, "late-time residual below -40 dB (no ringing, no instability)",
                   f"{late_n:.1f} / {late_f:.1f} dB")
-    return SimpleNamespace(t_echo=t_echo, resid=resid, win=win, fit=fit, alpha=alpha, beta=beta)
+    return SimpleNamespace(t_echo=t_echo, resid=resid, win=win, fit=c_eq * dV, fit_win=fit_win, c_eq=c_eq)
