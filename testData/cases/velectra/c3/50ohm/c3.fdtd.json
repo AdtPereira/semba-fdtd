@@ -1,22 +1,22 @@
 {
   "_format": "FDTD Input file",
   "general": {
-    "timeStep": 7.703332763342452e-12,
-    "numberOfSteps": 4544,
+    "timeStep": 7.7033e-12,
+    "numberOfSteps": 38944,
     "additionalArguments": ""
   },
   "boundary": {
     "xLower": {
-      "type": "mur"
+      "type": "pml"
     },
     "xUpper": {
-      "type": "mur"
+      "type": "pml"
     },
     "yLower": {
-      "type": "mur"
+      "type": "pml"
     },
     "yUpper": {
-      "type": "mur"
+      "type": "pml"
     },
     "zLower": {
       "type": "pec"
@@ -47,30 +47,6 @@
         {
           "type": "series",
           "resistance": 50.0,
-          "capacitance": 1e+22
-        }
-      ]
-    },
-    {
-      "name": "Terminal296ohm",
-      "id": 4,
-      "type": "terminal",
-      "terminations": [
-        {
-          "type": "series",
-          "resistance": 296.0,
-          "capacitance": 1e+22
-        }
-      ]
-    },
-    {
-      "name": "Terminal313ohm",
-      "id": 5,
-      "type": "terminal",
-      "terminations": [
-        {
-          "type": "series",
-          "resistance": 313.1,
           "capacitance": 1e+22
         }
       ]

@@ -1,6 +1,6 @@
 """Static check of the c3.fdtd.json + .exc input (no solver needed). Returns everything the later steps use.
 
-Case C = case B with the ground plane replaced by the closed PEC cylinder (R = 400 mm, axis z through the grid
+Case C = case B (c2) with the ground plane replaced by the closed PEC cylinder (R = 400 mm, axis z through the grid
 origin, grid 168 x 168 x 400). The role of every wire and probe is found from positions, not from names: the
 aggressor is the cable that starts at the generator node, a probe belongs to the wire whose (i, j) it sits on, and it
 is near/far by its k.
@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from c3_analytic import lmat
-from c3_common import C0, ETA0, EXPECTED, H_A, R_EFF_FACTOR, ROLES, ZC_A_MEAS, find_file, solver_time_plan
+from c3_common import C0, EXPECTED, H_PLANE, MATCH_TOL, ROLES, WINDOW_MISMATCHED, find_file, solver_time_plan
 
 
 def load_case(here, case_name, log):
@@ -27,7 +27,8 @@ def load_case(here, case_name, log):
     work = case_path.parent
     os.chdir(work)                                   # semba-fdtd runs and writes its outputs here
     inp = json.loads(case_path.read_text())
-    c = SimpleNamespace(case_path=case_path, WORK=work, inp=inp, HERE=here)
+    c = SimpleNamespace(case_path=case_path, WORK=work, inp=inp, HERE=here, name=work.name)
+    log.info("case folder", str(work))
     _geometry(c, log)
     _wall(c, log)
     _boundaries_and_probes(c, log)
@@ -46,10 +47,9 @@ def _geometry(c, log):
     dx, origin, ncell = grid["steps"]["x"][0], grid["origin"], grid["numberOfCells"]
     c.dx, c.origin, c.ncell = dx, origin, ncell
     log.check(grid["steps"]["y"][0] == dx and grid["steps"]["z"][0] == dx, "cubic cells", f"dx = {dx * 1e3:g} mm")
-    log.check(abs(dx - EXPECTED["dx"]) < 1e-12 and list(ncell) == EXPECTED["cells"], "grid is 168 x 168 x 400 cells of 5 mm",
+    log.check(abs(dx - EXPECTED["dx"]) < 1e-12 and list(ncell) == EXPECTED["cells"], "grid is 168 x 168 x 400 cells of 5 mm (c3_common.EXPECTED)",
               f"dx = {dx * 1e3:g} mm, cells = {ncell} (case B was 168 x 88 x 400)")
-    log.check(all(abs(a - b) < 1e-12 for a, b in zip(origin, EXPECTED["origin"])), "grid origin (-0.42, -0.42, 0)",
-              f"{origin}")
+    log.check(all(abs(a - b) < 1e-12 for a, b in zip(origin, EXPECTED["origin"])), "grid origin (-0.42, -0.42, 0)", f"{origin}")
 
     # wires: aggressor = the cable that starts at the generator node
     gen = inp["sources"][0]
@@ -83,8 +83,10 @@ def _geometry(c, log):
     log.check(vic.mat["radius"] == c.radius, "same wire radius", f"r = {c.radius * 1e3:g} mm")
     log.check(c.radius / dx <= 0.11, "wire radius / dx below the thin-wire stability limit 0.11",
               f"r/dx = {c.radius / dx:.3f}")
+    log.info("grid", f"{ncell[0]} x {ncell[1]} x {ncell[2]} cells = {ncell[0] * ncell[1] * ncell[2] / 1e6:.2f} Mcells "
+                     f"(before the PML layers)")
 
-    # terminals: pure resistors, 50 ohm on all four ends
+    # terminals: pure resistors, one value for the four ends (50 ohm in the real experiment, Zc of the wire when matched)
     def res(term):
         t_ = term["terminations"][0]
         return t_["resistance"], t_["type"] == "series" and t_.get("capacitance", 0) >= 1e20
@@ -92,8 +94,11 @@ def _geometry(c, log):
                        "vic far (FE)": vic.term_f}.items():
         log.check(res(term)[1], f"{name} terminal {term['name']} is a pure resistor", f"{term['terminations'][0]}")
     c.R = (res(agg.term_n)[0], res(agg.term_f)[0], res(vic.term_n)[0], res(vic.term_f)[0])   # R_S, R_L, R_NE, R_FE
-    log.check(all(abs(r - EXPECTED["R"]) < 1e-9 for r in c.R), "all four ends are 50 ohm (no leftover 296/313 ohm)",
-              f"R_S, R_L, R_NE, R_FE = {c.R}")
+    log.check(len(set(c.R)) == 1, "the four ends have the same resistance", f"R_S, R_L, R_NE, R_FE = {c.R}", "WARN")
+    used = {w.term_n["id"] for w in W.values()} | {w.term_f["id"] for w in W.values()}
+    spare = [m["name"] for m in inp["materials"] if m["type"] == "terminal" and m["id"] not in used]
+    log.check(not spare, "no terminal material is left unused in the JSON (old 296/313 ohm leftovers)", f"unused: {spare}", "WARN")
+
     c.x = (origin[0] + agg.p0[0] * dx, origin[0] + vic.p0[0] * dx)         # wire x positions (m)
     c.yw = origin[1] + agg.p0[1] * dx                                        # wire y position (m), same for both
 
@@ -172,7 +177,7 @@ def _wall(c, log):
               f"h = {c.h * 1e3:.0f} mm (j = 3 or 5 gives h = 40 or 30 mm: the result would be shifted by the staircase, "
               f"not by physics; use the conformal mesher if offered)")
     sealed = _sealed(G, [(i, jw) for i in iw])
-    log.check(sealed, "wall is closed: the wire region cannot reach the Mur faces through free nodes (no leak in the shell)",
+    log.check(sealed, "wall is closed: the wire region cannot reach the open x/y faces through free nodes (no leak in the shell)",
               "closed ring" if sealed else "LEAK: free nodes connect the wires to the outside at k = 200")
     c.wall = SimpleNamespace(G=G, radius_mean=float(r.mean()), j_under=below)
 
@@ -182,8 +187,13 @@ def _boundaries_and_probes(c, log):
     bnd = inp["boundary"]
     log.check(bnd["zLower"]["type"] == "pec" and bnd["zUpper"]["type"] == "pec",
               "z faces are PEC (end walls: wire ends sit on them)", f"{bnd['zLower']['type']}/{bnd['zUpper']['type']}")
-    log.check(all(bnd[k]["type"] == "mur" for k in ("xLower", "xUpper", "yLower", "yUpper")),
-              "x and y faces are Mur (shielded by the cylinder)")
+    c.bnd_xy = {k: bnd[k]["type"] for k in ("xLower", "xUpper", "yLower", "yUpper")}
+    # semba-fdtd (smbjson.F90, labelToBoundaryType) matches the type with a case-sensitive `select case`: "PML" or
+    # "Pml" is silently not recognised and the face is NOT absorbing (the Report then says "no CPML Borders found").
+    log.check(all(v in ("mur", "pml") for v in c.bnd_xy.values()),
+              "x/y faces are open: exactly lowercase 'mur' or 'pml' (other spellings are ignored by the solver)", f"{c.bnd_xy}")
+    log.check(all(v == "pml" for v in c.bnd_xy.values()), "x/y faces are PML (convention of c1, c2 and c3)",
+              f"{c.bnd_xy}", "WARN")
     log.check(c.gen["field"] == "voltage" and c.gen_pos == W["agg"].p0,
               "generator is a voltage source at the aggressor near end", f"field = {c.gen['field']}, node {c.gen_pos}")
     c.PROBES = {}                                    # role -> probe name, e.g. "vic_near" -> "NE probe"
@@ -195,8 +205,6 @@ def _boundaries_and_probes(c, log):
     log.check(set(c.PROBES) == set(ROLES) and len(inp["probes"]) == 4
               and all(pr["field"] == "current" for pr in inp["probes"]),
               "four current probes: aggressor near/far, victim near/far", f"{c.PROBES}")
-    log.info("wire model", "the JSON does not say which wire model runs, and Report.txt prints 'MTLN wires' in any MTLN build. "
-             "Confirm Holland with MTLN off in the Solver dialog before the long run (Zc about 308 ohm points to the thin wire)")
 
 
 def _excitation(c, log):
@@ -228,42 +236,54 @@ def _excitation(c, log):
 
 
 def _time_and_references(c, log):
-    """Time step / window against the solver limit, and the analytic references (inductance matrices)."""
+    """Time step / window against the solver limit, and the analytic reference (inductance matrix, physical radius)."""
     inp = c.inp
     c.T = c.length / C0                                          # one-way delay (s)
     dt_json, n_json = inp["general"]["timeStep"], inp["general"]["numberOfSteps"]
     window_json = dt_json * n_json
     c.plan = plan = solver_time_plan(dt_json, n_json, c.dx)      # what semba-fdtd will really run (c3_common)
     c.dt_solver = plan.dt_limit                                  # largest dt semba-fdtd accepts without correcting it
-    log.check(not plan.corrected, "timeStep within the solver limit (set 7.7033e-12 s and 38944 steps in the Solver dialog)",
-              f"json {dt_json:.4e} s x {n_json} steps; limit {plan.dt_limit:.4e} s (0.8 dt_CFL)"
-              + (f"; semba-fdtd will correct dt to {plan.dt:.4e} s and run {plan.n_final} steps = "
-                 f"{plan.t_final * 1e9:.4f} ns" if plan.corrected else f" -> {plan.t_json * 1e9:.4f} ns"), "WARN")
-    log.check(window_json >= EXPECTED["window"] * 0.999, "simulated window is the 300 ns of the tutorial",
-              f"{window_json * 1e9:.1f} ns")
+    log.check(not plan.corrected, "timeStep within the solver limit",
+              f"json {dt_json:.4e} s, limit {plan.dt_limit:.4e} s (0.8 dt_CFL); "
+              + (f"semba-fdtd will correct dt to {plan.dt:.4e} s and run {plan.n_final} steps = "
+                 f"{plan.t_final * 1e9:.4f} ns (json: {n_json} steps = {window_json * 1e9:.4f} ns)"
+                 if plan.corrected else f"kept: {n_json} steps = {window_json * 1e9:.4f} ns"), "WARN")
+
+    # analytic reference: the PHYSICAL radius only, no fitted r_eff. L = wire pair inside the closed cylinder (case C); L_plane = the
+    # same pair at h = 35 mm over the plane of case B (for the analytic B -> C change, see c3_bc)
+    R_cyl = EXPECTED["cyl_R"]
+    c.refs = {"physical radius": c.radius}
+    c.primary = "physical radius"
+    c.L = {k: lmat([(c.x[0], c.yw), (c.x[1], c.yw)], r, R=R_cyl) for k, r in c.refs.items()}
+    c.L_plane = {k: lmat([(c.x[0], H_PLANE), (c.x[1], H_PLANE)], r) for k, r in c.refs.items()}
+    c.Zc_r = C0 * c.L[c.primary][0, 0]                           # analytic Zc of one wire inside the cylinder, physical radius
+    c.matched = all(abs(r - c.Zc_r) / c.Zc_r < MATCH_TOL for r in c.R)
+    c.window_need = c.t0 + 2 * c.T + 4 * c.sigma                 # pulse + one round trip + tail
+    need = c.window_need if c.matched else WINDOW_MISMATCHED
+    c.window_req = need                                          # what the results must cover
+    log.check(window_json >= need * 0.999,
+              "simulated window holds the first echo" if c.matched else "simulated window is the 300 ns of the tutorial",
+              f"{window_json * 1e9:.1f} ns, needed {need * 1e9:.1f} ns")
     dt_exc = c.exc[1, 0] - c.exc[0, 0]
     log.check(c.exc[-1, 0] >= window_json - 2 * dt_exc,
               "the .exc file covers the whole simulated window (otherwise the source is cut or zero)",
               f"file ends at {c.exc[-1, 0] * 1e9:.1f} ns, window {window_json * 1e9:.1f} ns")
+
+    gam = (c.R[0] - c.Zc_r) / (c.R[0] + c.Zc_r)
+    if c.matched:
+        log.check(True, "terminals equal the analytic Zc of the physical radius within 2 % (the analytic line is then matched)",
+                  f"R = {c.R[0]:g} ohm, Zc = {c.Zc_r:.1f} ohm")
+    else:
+        log.info("terminals vs analytic Zc (physical radius)",
+                 f"R = {c.R[0]:g} ohm, Zc = {c.Zc_r:.1f} ohm: mismatched (Gamma = {gam:+.3f} at every end); "
+                 f"the line rings and the analytic line has the same echoes")
     log.check(abs(c.h - EXPECTED["height"]) < 1e-9 and abs(c.length - EXPECTED["length"]) < 1e-9
               and abs(c.sep - EXPECTED["sep"]) < 1e-9 and abs(c.radius - EXPECTED["radius"]) < 1e-12,
-              "geometry as in the tutorial", f"h = {c.h * 1e3:g} mm, s = {c.sep * 1e3:g} mm, L = {c.length:g} m, "
+              "geometry as expected (c3_common.EXPECTED)", f"h = {c.h * 1e3:g} mm, s = {c.sep * 1e3:g} mm, L = {c.length:g} m, "
               f"r = {c.radius * 1e3:g} mm", "WARN")
-
-    # r_eff from case A: the plane formula of case A (h = 35 mm) turns the measured Zc into the radius of the thin wire
-    c.refs = {"radius r": c.radius, f"r_eff = {R_EFF_FACTOR} r": R_EFF_FACTOR * c.radius}
-    if ZC_A_MEAS:
-        c.refs[f"r_eff from case A (Zc {ZC_A_MEAS:g} ohm)"] = H_A / math.cosh(2 * math.pi * ZC_A_MEAS / ETA0)
-    c.primary = list(c.refs)[-1]                     # the reference the pass/fail checks use
-    R = EXPECTED["cyl_R"]
-    pts = [(c.x[0], c.yw), (c.x[1], c.yw)]           # wires inside the circle of radius R centred on the origin
-    pts_plane = [(c.x[0], H_A), (c.x[1], H_A)]       # the same pair over the plane of case B (h = 35 mm)
-    c.L = {k: lmat(pts, r, R=R) for k, r in c.refs.items()}
-    c.L_plane = {k: lmat(pts_plane, r) for k, r in c.refs.items()}
-    c.zc_single = C0 * c.L[c.primary][0, 0]          # self term of the aggressor in the pair (tutorial 5.1: 308.1 ohm)
     log.info("input", f"R = {c.R} ohm, h = {c.h * 1e3:g} mm, s = {c.sep * 1e3:g} mm, L = {c.length:g} m, "
-                      f"r = {c.radius * 1e3:g} mm, T = {c.T * 1e9:.3f} ns, cylinder R = {R * 1e3:g} mm")
+                      f"r = {c.radius * 1e3:g} mm, T = {c.T * 1e9:.3f} ns, cylinder R = {R_cyl * 1e3:g} mm")
     for k, r in c.refs.items():
-        log.info("analytic reference (cylinder)", f"{k}: r = {r * 1e3:.4f} mm, Zc = c l11 = {C0 * c.L[k][0, 0]:.1f} ohm, "
-                                                  f"l11/l12 = {c.L[k][0, 0] * 1e6:.3f}/{c.L[k][0, 1] * 1e6:.3f} uH/m "
-                                                  f"(plane: {c.L_plane[k][0, 0] * 1e6:.3f}/{c.L_plane[k][0, 1] * 1e6:.3f})")
+        log.info("analytic reference (cylinder)", f"{k}: r = {r * 1e3:.4f} mm, Zc single = {c.Zc_r:.1f} ohm, "
+                 f"l11/l12 = {c.L[k][0, 0] * 1e6:.3f}/{c.L[k][0, 1] * 1e6:.3f} uH/m "
+                 f"(plane of case B: {C0 * c.L_plane[k][0, 0]:.1f} ohm, {c.L_plane[k][0, 0] * 1e6:.3f}/{c.L_plane[k][0, 1] * 1e6:.3f} uH/m)")

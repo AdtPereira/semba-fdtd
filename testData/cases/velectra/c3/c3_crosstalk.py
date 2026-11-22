@@ -20,13 +20,18 @@ def crosstalk(case, t, I, log):
     Vp_fe = -Vp_fe
     log.info("NE peak", f"{Vp_ne * 1e3:+.3f} mV at {tp_ne * 1e9:.3f} ns")
     log.info("FE peak", f"{Vp_fe * 1e3:+.3f} mV at {tp_fe * 1e9:.3f} ns")
-    log.check(Vp_ne > 0 and Vp_fe < 0, "polarity: NE positive, FE negative (V_NE = -R*I_near, V_FE = +R*I_far)")
+    if c.matched:        # an ideal matched homogeneous line has no FE: its sign is the sign of a small imbalance, not a check
+        log.check(Vp_ne > 0, "polarity: NE positive (V_NE = -R*I_near); FE sign is not checked on a matched line")
+    else:
+        log.check(Vp_ne > 0 and Vp_fe < 0, "polarity: NE positive, FE negative (V_NE = -R*I_near, V_FE = +R*I_far)")
     return SimpleNamespace(V=V, Vp=(Vp_ne, Vp_fe), tp=(tp_ne, tp_fe))
 
 
 def transfer_function(case, t, xt):
     """H(f) = FFT(V_probe) / FFT(source) on the zero-padded axis, restricted to the band where the source has energy
-    (3 to 100 MHz, source above -40 dB) and away from the line resonances (deep narrow nulls, see c3_analytic)."""
+    (3 to 100 MHz, source above -40 dB) and away from the line resonances (deep narrow nulls, see c3_analytic).
+    For the matched case (40 ns window) the zero-padded FFT of a record that ends before the line has settled is still
+    exact for what was simulated; the transfer function has no ring-down structure there."""
     c = case
     nfft, f = fft_setup(t)
     S = np.fft.rfft(c.source(t), nfft)
@@ -37,8 +42,11 @@ def transfer_function(case, t, xt):
 
 
 def late_time(case, t, I, xt, log):
-    """The mismatched line must ring down: no growth, below -40 dB after the echo (about 150 to 160 ns).
-    Case B ended at -41.7 dB (thin margin); the closed cylinder may add cavity ringing, so watch this number."""
+    """The mismatched line (50 ohm case) must ring down: no growth, below -40 dB after the echo (about 150 to 160 ns).
+    The matched case has no ring-down and a window of only ~40 ns: nothing to check there."""
+    if case.matched:
+        log.info("late-time residual", "not checked: terminals equal Zc, the window ends before any second echo")
+        return
     late = t > LATE_START
     sig = {**{f"I_{r}": I[r] for r in ROLES}, "V_NE": xt.V["NE"], "V_FE": xt.V["FE"]}
     if late.any():
@@ -46,5 +54,4 @@ def late_time(case, t, I, xt, log):
         log.info(f"late-time residual after {LATE_START * 1e9:.0f} ns (re own peak)",
                  ", ".join(f"{k} {v:.1f} dB" for k, v in dbl.items()))
         log.check(max(dbl.values()) < -40, "late-time residual below -40 dB (no ringing, no instability)",
-                  f"worst {max(dbl.values()):.1f} dB (case B: -41.7 dB; if this fails, lengthen the window "
-                  f"and the .exc file)", "WARN")
+                  f"worst {max(dbl.values()):.1f} dB", "WARN")

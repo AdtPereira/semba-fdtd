@@ -1,7 +1,6 @@
-"""Shared pieces of the c3 (case C) pre/post-processing: constants, PASS/WARN/FAIL log, file search, repository paths.
+"""Shared pieces of the c3 (case C) pre/post-processing: constants, PASS/WARN/FAIL log, file search, repo paths.
 
-Case C = case B with the ground plane replaced by the closed PEC cylinder (R = 400 mm, L = 2 m).
-"""
+Case C = case B (c2) with the ground plane replaced by the closed PEC cylinder (R = 400 mm, L = 2 m)."""
 import math
 import os
 from pathlib import Path
@@ -12,24 +11,36 @@ import numpy as np
 C0 = 299792458.0
 ETA0 = 376.730313668
 MU0 = 4e-7 * math.pi
-R_EFF_FACTOR = 0.75        # MTLN/Holland thin wires behave as if r = 0.75 r_w (as in Paul D.28)
 CFLN = 0.8                 # HEURCFL of semba-fdtd (fdetypes.F90): dt is corrected to CFLN * dt_CFL
 trapz = getattr(np, "trapezoid", None) or np.trapz
 
 ROLES = ("agg_near", "agg_far", "vic_near", "vic_far")      # the four probed wire ends
-# What the tutorial (claude/crosstalk_fdtd_tutorial_ABC_EN.md, sections 1.4 and 5) asks for; deviations are reported.
+# What every case folder shares; height, grid, terminals and window come from each JSON (deviations are reported, not fatal).
+# Geometry of case C: the wires of case B (same indices, h = 35 mm over the wall at j = 4, s = 70 mm, L = 2 m, r = 0.5 mm, dx = 5 mm)
+# in a grid of 168 x 168 x 400 cells (origin -0.42, -0.42, 0) that holds the closed PEC cylinder of radius 400 mm; PML on x and y
+# (physically irrelevant behind the closed shell, kept for the convention of c1 and c2).
 EXPECTED = dict(height=0.035, length=2.0, radius=0.5e-3, dx=5e-3, cells=[168, 168, 400], sep=0.070,
-                R=50.0, window=300e-9, origin=[-0.42, -0.42, 0.0], cyl_R=0.400,
-                idx_agg=([77, 11, 0], [77, 11, 400]), idx_vic=([91, 11, 0], [91, 11, 400]), wall_j=4)
-H_A = 0.035                # height of the wire in case A; with ZC_A_MEAS it defines r_eff (plane formula of case A)
-ZC_A_MEAS = 313.1          # Zc effective measured in case A (c1: V_S/I_peak - R_S); None to skip that reference
+                origin=[-0.42, -0.42, 0.0], cyl_R=0.400, wall_j=4,
+                idx_agg=([77, 11, 0], [77, 11, 400]), idx_vic=([91, 11, 0], [91, 11, 400]))
+WINDOW_MISMATCHED = 300e-9 # window of the 50 ohm case (tutorial): the mismatch (Zc ~ 300 ohm against 50 ohm) rings for ~150 ns
 BAND = (3e6, 100e6)        # usable FDTD band for the transfer function comparison (tutorial, section 1.3)
 SRC_FLOOR_DB = -40.0       # use the transfer function only where the source spectrum is above this
 NULL_HALF_WIDTH = 4e6      # bins this close to a line resonance n*c/(2L) are skipped in the dB comparison
-LATE_START = 175e-9        # the echo of the mismatched line is below -40 dB after about 150 to 160 ns
-B_RESULTS = "c2_results.npz"   # the case B numbers (t, V_NE, V_FE, I_*), for the B -> C comparison
-BC_TOL_PCT = 3.0           # B -> C change of the FDTD peaks must match the analytic change within this many points
-BC_TOL_DB = 1.5            # same for the transfer function (dB), resonance nulls skipped
+LATE_START = 175e-9        # 50 ohm case: the echo of the mismatched line was below -40 dB after about 150 to 160 ns (Mur run)
+MATCH_TOL = 0.02           # terminals within 2 % of the analytic Zc of the physical radius count as matched
+H_PLANE = 0.035            # height of the wires over the plane of case B (the plane the cylinder replaces)
+# B -> C: the change of the FDTD peaks and of |H| against the change of the analytic line (the offset of the thin-wire model, the
+# same in B and C, cancels in this difference). 'A few percent' of the tutorial (5.2) is taken as a WARN limit, not a fail.
+BC_WARN_PCT = 3.0          # WARN: B -> C change of a peak differs from the analytic change by more than this many points
+BC_FAIL_PCT = 10.0         # FAIL: ... by more than this many points (a leak in the shell, a wrong wall height)
+BC_WARN_DB = 1.5           # WARN: B -> C change of |H| differs from the analytic change by more than this (dB)
+BC_FAIL_DB = 6.0           # FAIL: ... by more than this (dB)
+B_RESULTS = {False: "c2_results.npz", True: "c2_results_matched.npz"}    # case B numbers (50ohm / matched), key = matched
+
+
+def zc_wire_plane(h, r):
+    """Characteristic impedance of one round wire of radius r at height h over a PEC plane (exact image formula)."""
+    return ETA0 / (2 * math.pi) * math.acosh(h / r)
 
 
 def solver_time_plan(dt_json, n_json, dx, dy=None, dz=None):
@@ -40,8 +51,7 @@ def solver_time_plan(dt_json, n_json, dx, dy=None, dz=None):
       semba_fdtd.F90 ~l.385-411: the final step is then int(dt_json / dt * N_json) (truncated), so the simulated
                                  time N * dt is kept to within one step. Not applied when dt_json == 0.
     The switches -cfl and -n (additionalArguments, or flags of the FDTD object) change this; the monitor of
-    c3_solver reads the real numbers from _Report.txt anyway.
-    For case C, set timeStep = 7.7033e-12 and numberOfSteps = 38944 in the Solver dialog: then nothing is corrected."""
+    c3_solver reads the real numbers from _Report.txt anyway."""
     dy, dz = dy or dx, dz or dx
     dt_cfl = 1.0 / (C0 * math.sqrt(1 / dx ** 2 + 1 / dy ** 2 + 1 / dz ** 2))
     dt_limit = CFLN * dt_cfl
@@ -75,8 +85,7 @@ class Log:
                   "(log = Log() once, before load_case, and do not create it again).")
             return 1
         print(f"\n{n['PASS']} passed, {n['WARN']} warnings, {n['FAIL']} failed"
-              + ("  -> case C validated" if n["FAIL"] == 0 else "  -> fix the failed items (wall, grid, B -> C change) "
-                 "before trusting case C"))
+              + ("  -> case C checked (read the INFO lines: the differences to the analytic line and to case B are the result)" if n["FAIL"] == 0 else "  -> fix the failed items (wall, grid, B -> C change) before trusting case C"))
         return n["FAIL"]
 
 

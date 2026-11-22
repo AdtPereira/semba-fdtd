@@ -9,19 +9,25 @@ import numpy as np
 C0 = 299792458.0
 ETA0 = 376.730313668
 MU0 = 4e-7 * math.pi
-R_EFF_FACTOR = 0.75        # MTLN/Holland thin wires behave as if r = 0.75 r_w (as in Paul D.28)
 CFLN = 0.8                 # HEURCFL of semba-fdtd (fdetypes.F90): dt is corrected to CFLN * dt_CFL
 trapz = getattr(np, "trapezoid", None) or np.trapz
 
 ROLES = ("agg_near", "agg_far", "vic_near", "vic_far")      # the four probed wire ends
-# What the tutorial (claude/crosstalk_fdtd_tutorial_ABC_EN.md, section 4) asks for; deviations are reported.
-EXPECTED = dict(height=0.035, length=2.0, radius=0.5e-3, dx=5e-3, cells=[168, 88, 400], sep=0.070,
-                R=50.0, window=300e-9)
-ZC_A_MEAS = 313.1          # Zc effective measured in case A (c1: V_S/I_peak - R_S); None to skip that reference
+# What every case folder shares; height, grid, terminals and window come from each JSON (deviations are reported, not fatal).
+# Geometry of case B: h = 35 mm (wires at j = 11, plane at j = 4, 7 cells apart), s = 70 mm, L = 2 m, r = 0.5 mm, dx = 5 mm,
+# box 168 x 88 x 400 cells with a PML on x and y (the same grid and wire cells as c1/h35, so B is A plus a second wire).
+EXPECTED = dict(height=0.035, length=2.0, radius=0.5e-3, dx=5e-3, cells=[168, 88, 400], sep=0.070)
+WINDOW_MISMATCHED = 300e-9 # window of the 50 ohm case (tutorial): the mismatch (Zc ~ 300 ohm against 50 ohm) rings for ~150 ns
 BAND = (3e6, 100e6)        # usable FDTD band for the transfer function comparison (tutorial, section 1.3)
 SRC_FLOOR_DB = -40.0       # use the transfer function only where the source spectrum is above this
 NULL_HALF_WIDTH = 4e6      # bins this close to a line resonance n*c/(2L) are skipped in the dB comparison
-LATE_START = 175e-9        # the echo of the mismatched line is below -40 dB after about 150 to 160 ns
+LATE_START = 175e-9        # 50 ohm case: the echo of the mismatched line was below -40 dB after about 150 to 160 ns (Mur run)
+MATCH_TOL = 0.02           # terminals within 2 % of the analytic Zc of the physical radius count as matched
+
+
+def zc_wire_plane(h, r):
+    """Characteristic impedance of one round wire of radius r at height h over a PEC plane (exact image formula)."""
+    return ETA0 / (2 * math.pi) * math.acosh(h / r)
 
 
 def solver_time_plan(dt_json, n_json, dx, dy=None, dz=None):
@@ -66,7 +72,7 @@ class Log:
                   "(log = Log() once, before load_case, and do not create it again).")
             return 1
         print(f"\n{n['PASS']} passed, {n['WARN']} warnings, {n['FAIL']} failed"
-              + ("  -> case B validated, go to case C" if n["FAIL"] == 0 else "  -> fix the failed items before case C"))
+              + ("  -> case B checked (read the INFO lines: the differences to the analytic line are the result)" if n["FAIL"] == 0 else "  -> fix the failed items before case C"))
         return n["FAIL"]
 
 

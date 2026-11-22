@@ -1,0 +1,278 @@
+{
+  "_format": "FDTD Input file",
+  "general": {
+    "timeStep": 7.7033e-12,
+    "numberOfSteps": 5192,
+    "additionalArguments": ""
+  },
+  "boundary": {
+    "xLower": {
+      "type": "pml"
+    },
+    "xUpper": {
+      "type": "pml"
+    },
+    "yLower": {
+      "type": "pml"
+    },
+    "yUpper": {
+      "type": "pml"
+    },
+    "zLower": {
+      "type": "pec"
+    },
+    "zUpper": {
+      "type": "pec"
+    }
+  },
+  "materials": [
+    {
+      "name": "PEC",
+      "id": 1,
+      "type": "pec"
+    },
+    {
+      "name": "Wire_material",
+      "id": 2,
+      "radius": 0.0005,
+      "resistancePerMeter": 0.0,
+      "inductancePerMeter": 0.0,
+      "type": "wire"
+    },
+    {
+      "name": "Terminal296.29ohm",
+      "id": 3,
+      "type": "terminal",
+      "terminations": [
+        {
+          "type": "series",
+          "resistance": 296.29,
+          "capacitance": 1e+22
+        }
+      ]
+    }
+  ],
+  "materialAssociations": [
+    {
+      "materialId": 1,
+      "elementIds": [
+        6
+      ]
+    },
+    {
+      "name": "Aggressor",
+      "materialId": 2,
+      "initialTerminalId": 3,
+      "endTerminalId": 3,
+      "type": "cable",
+      "elementIds": [
+        1
+      ]
+    },
+    {
+      "name": "Victim",
+      "materialId": 2,
+      "initialTerminalId": 3,
+      "endTerminalId": 3,
+      "type": "cable",
+      "elementIds": [
+        8
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "name": "Generator",
+      "type": "generator",
+      "magnitudeFile": "gauss_sigma2p5ns_t15ns.exc",
+      "elementIds": [
+        3
+      ],
+      "field": "voltage"
+    }
+  ],
+  "probes": [
+    {
+      "name": "Source probe",
+      "type": "wire",
+      "field": "current",
+      "elementIds": [
+        7
+      ],
+      "domain": {
+        "type": "time"
+      }
+    },
+    {
+      "name": "Load probe",
+      "type": "wire",
+      "field": "current",
+      "elementIds": [
+        4
+      ],
+      "domain": {
+        "type": "time"
+      }
+    },
+    {
+      "name": "NE probe",
+      "type": "wire",
+      "field": "current",
+      "elementIds": [
+        5
+      ],
+      "domain": {
+        "type": "time"
+      }
+    },
+    {
+      "name": "FE probe",
+      "type": "wire",
+      "field": "current",
+      "elementIds": [
+        2
+      ],
+      "domain": {
+        "type": "time"
+      }
+    }
+  ],
+  "mesh": {
+    "grid": {
+      "numberOfCells": [
+        168,
+        88,
+        400
+      ],
+      "steps": {
+        "x": [
+          0.005
+        ],
+        "y": [
+          0.005
+        ],
+        "z": [
+          0.005
+        ]
+      },
+      "origin": [
+        -0.42,
+        -0.42,
+        0.0
+      ]
+    },
+    "coordinates": [
+      {
+        "id": 1,
+        "relativePosition": [
+          77,
+          11,
+          0
+        ]
+      },
+      {
+        "id": 2,
+        "relativePosition": [
+          77,
+          11,
+          400
+        ]
+      },
+      {
+        "id": 3,
+        "relativePosition": [
+          91,
+          11,
+          400
+        ]
+      },
+      {
+        "id": 4,
+        "relativePosition": [
+          91,
+          11,
+          0
+        ]
+      }
+    ],
+    "elements": [
+      {
+        "id": 1,
+        "name": "Aggressor_model",
+        "type": "polyline",
+        "coordinateIds": [
+          1,
+          2
+        ]
+      },
+      {
+        "id": 2,
+        "name": "FE_probe",
+        "type": "node",
+        "coordinateIds": [
+          3
+        ]
+      },
+      {
+        "id": 3,
+        "name": "Generator",
+        "type": "node",
+        "coordinateIds": [
+          1
+        ]
+      },
+      {
+        "id": 4,
+        "name": "Load_probe",
+        "type": "node",
+        "coordinateIds": [
+          2
+        ]
+      },
+      {
+        "id": 5,
+        "name": "NE_probe",
+        "type": "node",
+        "coordinateIds": [
+          4
+        ]
+      },
+      {
+        "id": 6,
+        "name": "Plane",
+        "type": "cell",
+        "intervals": [
+          [
+            [
+              168,
+              4,
+              400
+            ],
+            [
+              0,
+              4,
+              0
+            ]
+          ]
+        ]
+      },
+      {
+        "id": 7,
+        "name": "Source_probe",
+        "type": "node",
+        "coordinateIds": [
+          1
+        ]
+      },
+      {
+        "id": 8,
+        "name": "Victim_model",
+        "type": "polyline",
+        "coordinateIds": [
+          4,
+          3
+        ]
+      }
+    ]
+  }
+}

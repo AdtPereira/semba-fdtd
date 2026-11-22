@@ -1,7 +1,7 @@
 """Run semba-fdtd (through pyWrapper) with a live progress bar, and load the four probe currents.
 
 How semba-fdtd decides the length of a run and reports it (OpenSEMBA/fdtd, commit cd069a6; see solver_time_plan in
-c3_common):
+c3_common and the notes at the end of run_plan):
   * total steps = int(dt_json / dt_corrected * numberOfSteps), dt_corrected = 0.8 dt_CFL when the JSON dt is larger;
   * progress is printed to <case>_Report.txt (flushed) about every 60 s of wall time (REPORTINGSECONDS, progress.F90):
     "Simulated: n / N steps", "Mcells/sec : speed (n0 to n)", "Mins. until end";
@@ -10,7 +10,7 @@ pyWrapper.FDTD.run() waits in silence (subprocess.run with capture_output), whic
 cell means nothing is shown for the whole run. run_solver starts the same command (solver.run_command) with Popen,
 sends its stdout to <case>_stdout.log and follows <case>_Report.txt, drawing a bar:
 
-    c3  [##########..................................]  22.4 %   step ~8723/38944   t ~67.2/300.0 ns
+    c3  [##########..................................]  24.0 %   step ~8723/38944   t ~67.2/300.0 ns
         elapsed 0:09:12   ETA 0:31:55 (about 16:41)   54.2 Mcells/s   last report 17 s ago
 
 Between two reports (60 s) the step is extrapolated with the speed of the last report ('~'). Interrupt (the button of
@@ -31,7 +31,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from c3_common import ROLES, find_file
+from c3_common import ROLES, find_file, solver_time_plan
 
 POLL = 1.0                      # seconds between screen updates of the monitor
 BAR_WIDTH = 40
@@ -56,8 +56,7 @@ def hms(seconds):
 
 
 def speed_hint(case):
-    """Mcells/s to use for an a-priori estimate: C3_MCELLS_PER_S, else the average of the last Report.txt found.
-    Case B ran at 120 Mcells/s on this laptop (plugged in, high-performance plan)."""
+    """Mcells/s to use for an a-priori estimate: C3_MCELLS_PER_S, else the average of the last Report.txt found."""
     if os.environ.get("C3_MCELLS_PER_S"):
         return float(os.environ["C3_MCELLS_PER_S"]), "C3_MCELLS_PER_S"
     f = find_file(case.WORK, "*Report.txt")
@@ -68,12 +67,41 @@ def speed_hint(case):
     return None, None
 
 
-def run_plan(case):
+def mpi_settings():
+    """MPI launch from the environment (scalability tests of 2026-11-17 on ewing, case c3, MPI build):
+      C3_MPI_RANKS   number of ranks; 1 or unset = the serial run, as before. 8 was the best point (2.9x the serial build);
+                     16 was slower than 8, and one MPI rank is 1.8x slower than the serial build.
+      C3_MPI_DIR     cut direction, default x. The default of semba-fdtd (z) aborts with MPI_ERR_RANK when a wire is present;
+                     x and y work. The wires of case C run along z, like those of case B, so x or y.
+      MPIRUN         mpirun to use (default 'mpirun'; on ewing the one in /usr/local/bin, built with Slurm support)
+      C3_MPI_FLAGS   extra words for the mpirun command (before the executable)
+    SEMBA_EXE must then point to the MPI build (build-mpi/bin/semba-fdtd). Returns (mpi_command, flags, ranks, direction)."""
+    ranks = int(os.environ.get("C3_MPI_RANKS", "1"))
+    if ranks <= 1:
+        return None, None, 1, None
+    direction = os.environ.get("C3_MPI_DIR", "x").lower()
+    assert direction in ("x", "y", "z"), f"C3_MPI_DIR must be x, y or z, not {direction!r}"
+    cmd = f"{os.environ.get('MPIRUN', 'mpirun')} -n {ranks} {os.environ.get('C3_MPI_FLAGS', '')}".split()
+    return " ".join(cmd), f"-mpidir {direction}", ranks, direction
+
+
+def run_mode(semba_exe, ranks, direction, mpi_command):
+    """Short tag of how the solver is launched, shown in the plan, on the progress bar and in the final line."""
+    if ranks > 1:
+        return f"MPI {ranks} ranks, -mpidir {direction}"
+    return "serial (1 process)"
+
+
+def run_plan(case, ranks=1, direction=None, semba_exe=None, mpi_command=None):
     """Print and return what semba-fdtd will run: steps, simulated time, size, and the time it should take."""
     p = case.plan
-    mcells = float(np.prod(case.ncell)) / 1e6                  # semba reports the exact 'Total Mcells' at the start
+    # semba reports the exact 'Total Mcells' at the start; a PML face adds 8 layers outside the grid (c1_readme)
+    nx, ny, nz = case.ncell
+    nx += 8 * sum(case.bnd_xy[k] == "pml" for k in ("xLower", "xUpper"))
+    ny += 8 * sum(case.bnd_xy[k] == "pml" for k in ("yLower", "yUpper"))
+    mcells = float(nx * ny * nz) / 1e6
     speed, src = speed_hint(case)
-    plan = SimpleNamespace(**vars(p), mcells=mcells, speed=speed)
+    plan = SimpleNamespace(**vars(p), mcells=mcells, speed=speed, mode=run_mode(semba_exe, ranks, direction, mpi_command))
     print("\n=========== semba-fdtd run plan (rules of OpenSEMBA/fdtd, checked on commit cd069a6) ===========")
     print(f"  JSON    : dt = {p.dt_json:.4e} s x {p.n_json} steps = {p.t_json * 1e9:.4f} ns")
     print(f"  CFL     : dt_CFL = {p.dt_cfl:.4e} s (dx = {case.dx * 1e3:g} mm); semba-fdtd accepts dt <= 0.8 dt_CFL "
@@ -83,14 +111,43 @@ def run_plan(case):
               f"-> simulated time {p.t_final * 1e9:.4f} ns")
     else:
         print(f"  dt kept : {p.n_final} steps -> simulated time {p.t_final * 1e9:.4f} ns")
-    print(f"  size    : {' x '.join(str(n) for n in case.ncell)} = {mcells:.2f} Mcells")
+    print(f"  size    : {' x '.join(str(n) for n in case.ncell)} cells + PML layers = {mcells:.2f} Mcells")
+    exe = str(semba_exe or "?")
+    is_mpi_build = "mpi" in exe.lower()
+    print(f"  MODE    : {plan.mode}")
+    print(f"  solver  : {exe}  ({'MPI build' if is_mpi_build else 'serial build'})")
+    if ranks > 1:
+        found = shutil.which((mpi_command or "mpirun").split()[0])
+        print(f"  launcher: {mpi_command} {'-> ' + found if found else '-> NOT FOUND in PATH'}")
+        print(f"  threads : OMP_NUM_THREADS = {os.environ.get('OMP_NUM_THREADS', '?')} per rank; "
+              f"{os.cpu_count()} logical CPUs on this machine")
+        if not is_mpi_build:
+            print("  WARNING : C3_MPI_RANKS > 1 but SEMBA_EXE does not look like the MPI build (build-mpi/bin/semba-fdtd)")
+        if not found:
+            print("  WARNING : the launcher was not found; set MPIRUN to the full path of mpirun")
+    else:
+        print(f"  threads : OMP_NUM_THREADS = {os.environ.get('OMP_NUM_THREADS', 'not set')}; the serial build does not "
+              f"scale with OpenMP (ewing, 2026-11-17)")
+        if is_mpi_build:
+            print("  NOTE    : the MPI build is running on 1 process, about 1.8x slower than the serial build")
+        else:
+            print("  NOTE    : serial run. For MPI: SEMBA_EXE = build-mpi/bin/semba-fdtd and C3_MPI_RANKS=8 "
+                  "(about 2.9x faster on c3)")
+    if ranks > 1:
+        per_rank = case.ncell["xyz".index(direction)] / ranks
+        print(f"  MPI     : {ranks} ranks, cut in {direction}: {per_rank:.0f} cells per rank "
+              f"(the 16-rank run of c3, about 10 cells per rank, was slower than 8); OMP_NUM_THREADS = 1")
+        if direction == "z":
+            print("  WARNING : -mpidir z aborts with MPI_ERR_RANK when wires are present (c3, 2026-11-17); use x or y")
+        if per_rank < 16:
+            print("  WARNING : fewer than 16 cells per rank: the exchange of borders may cost more than it saves")
+        print("            the speed hint below comes from the last Report.txt: a serial one underestimates the MPI run")
     if speed:
         t_run = p.n_final * mcells / speed
         print(f"  expected: {hms(t_run)} at {speed:.1f} Mcells/s (from {src}; "
               f"finish about {(datetime.now() + timedelta(seconds=t_run)):%H:%M})")
     else:
-        print("  expected: unknown until the first report (set C3_MCELLS_PER_S for an estimate now; "
-              "case B: 120 Mcells/s -> about 1.0 to 1.1 h for case C)")
+        print("  expected: unknown until the first report (set C3_MCELLS_PER_S for an estimate now)")
     print("  reports : <case>_Report.txt, about every 60 s of wall time (the first one after ~60 s); "
           "the bar extrapolates between reports")
     return plan
@@ -189,7 +246,7 @@ def _lines(name, plan, st, t0_wall, rep, tick):
     if rep is None:                                              # waiting for the first report: dotted slots
         dots = "." * (tick % 4)
         return (f"{name}  {_bar(0)}   0.0 %   step 0/{n_final}   t 0/{plan.t_final * 1e9:.1f} ns",
-                f"    elapsed {hms(elapsed)}   waiting for the first semba report (they come every ~60 s){dots:<3}",
+                f"    {plan.mode}   elapsed {hms(elapsed)}   waiting for the first semba report (they come every ~60 s){dots:<3}",
                 f"{name} {_bar(0, 20)}  0.0 %  el {hms(elapsed)}  waiting 1st report{dots:<3}")
     n_rep, w_rep = rep
     mcells = st.mcells or plan.mcells
@@ -203,7 +260,7 @@ def _lines(name, plan, st, t0_wall, rep, tick):
     spd = f"{speed:.1f} Mcells/s" + (f" (avg {st.speed_avg:.1f})" if st.speed_avg and st.speed_inst else "")
     return (f"{name}  {_bar(frac)} {100 * frac:5.1f} %   step ~{int(n_est)}/{n_final}   "
             f"t ~{t_final * frac * 1e9:.1f}/{t_final * 1e9:.1f} ns",
-            f"    elapsed {hms(elapsed)}   {tail}   {spd}   last report {hms(now - w_rep)} ago",
+            f"    {plan.mode}   elapsed {hms(elapsed)}   {tail}   {spd}   last report {hms(now - w_rep)} ago",
             f"{name} {_bar(frac, 20)} {100 * frac:5.1f} %  n~{int(n_est)}/{n_final}  el {hms(elapsed)}  "
             f"{tail.replace('(about ', '(').replace('ETA ', 'ETA ')}")
 
@@ -237,15 +294,18 @@ def _stop_cleanly(proc, folder):
 
 
 def run_solver(case, repo, semba_exe, spinit_folder, progress=True):
-    """Copy the ngspice files, run semba-fdtd with a live progress bar; returns the pyWrapper solver object.
-    Running again overwrites the .dat files of the case folder: copy the folder of each case before rerunning."""
+    """Copy the ngspice files, run semba-fdtd with a live progress bar; returns the pyWrapper solver object."""
     sys.path[:0] = [str(Path(repo) / "src_pyWrapper")]
     from pyWrapper import FDTD                       # noqa: E402
 
     setNgspice(case.WORK, spinit_folder)
-    solver = FDTD(input_filename=case.case_path.name, path_to_exe=semba_exe)
+    mpi_command, flags, ranks, direction = mpi_settings()
+    if ranks > 1:
+        os.environ["OMP_NUM_THREADS"] = "1"          # one thread per rank (as in the scalability tests)
+    solver = FDTD(input_filename=case.case_path.name, path_to_exe=semba_exe, flags=flags, mpi_command=mpi_command)
     solver.cleanUp()
-    plan = run_plan(case)
+    plan = run_plan(case, ranks, direction, semba_exe, mpi_command)
+    print(f"  command : {' '.join(solver.run_command)}")
 
     folder = solver.getFolder()
     log_path = Path(folder) / f"{solver.getCaseName()}_stdout.log"
@@ -295,7 +355,7 @@ def run_solver(case, repo, semba_exe, spinit_folder, progress=True):
     n_done = st.n or plan.n_final
     screen.finish((f"{name}  {_bar(1.0)} 100.0 %   step {n_done}/{st.n_final or plan.n_final}   "
                    f"t {(st.t_final or plan.t_final) * 1e9:.3f} ns",
-                   f"    finished in {hms(wall)}   average {st.speed_avg or 0:.1f} Mcells/s   "
+                   f"    {plan.mode}   finished in {hms(wall)}   average {st.speed_avg or 0:.1f} Mcells/s   "
                    f"(solver log: {log_path.name}, report: {rp.name if rp else '?'})"))
     return solver
 
@@ -306,10 +366,14 @@ def _key(s):
 
 def probe_dat(root, name):
     """Elemwave/semba text probe of a run already made: header line, then time and current columns.
-    The probe names of c3 ('Source probe', 'Load probe', 'NE probe', 'FE probe') carry no trailing number, so the file
-    is found by the probe name itself, ignoring case, spaces and underscores; the newest match wins."""
+    The file is found by the probe name itself, ignoring case, spaces and underscores (newest match wins); if the name
+    ends in a number and nothing matches, the older pattern '*Wire*probe<n>*.dat' is tried."""
     key = _key(name)
-    hits = [p for p in Path(root).rglob("*.dat") if key in _key(p.stem) and "energy" not in p.stem.lower()]
+    ok = lambda p: key in _key(p.stem) and "energy" not in p.stem.lower()
+    hits = [p for p in Path(root).glob("*.dat") if ok(p)] or [p for p in Path(root).rglob("*.dat") if ok(p)]
+    if not hits and re.search(r"(\d+)$", name):
+        n = re.search(r"(\d+)$", name).group(1)
+        hits = sorted(Path(root).rglob(f"*Wire*probe{n}*.dat"))
     assert hits, f"no .dat file for probe '{name}' under {root}; run without --no-run or point to the results folder"
     f = max(hits, key=lambda p: p.stat().st_mtime)
     a = np.loadtxt(f, skiprows=1)

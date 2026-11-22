@@ -1,26 +1,40 @@
 # %% Velectra cross-talk experiment, case B (c2): TWO thin wires over the same PEC ground plane (NEXT / FEXT).
 #
-# Purpose: validate the cross-talk of the FDTD against the analytic multiconductor line (MTL) before case C
-# (closed cylinder). Case A (c1) already calibrated source, .exc file, delay, effective Zc and probe sign.
-# Geometry (dx = 5 mm): two 1 mm wires, h = 35 mm above a PEC plane, s = 70 mm apart, L = 2 m, 50 ohm series
-# terminals on all four ends, 1 V gaussian generator (sigma = 2.5 ns, t0 = 15 ns) in series with the aggressor
-# near-end terminal (= R_S). 300 ns window: the mismatch (Zc ~ 300 ohm against 50 ohm) rings for ~150 ns.
+# Purpose: compare the cross-talk of semba-fdtd with the analytic multiconductor line (MTL) before case C (closed cylinder).
+# Case A (c1) calibrated source, .exc file, delay and probe sign, and showed that thin-wire effects (a few % of velocity,
+# about +6 % of L' at 35 mm) do not come from the boundary or from a radius change. Two curves are compared, nothing else:
+# semba-fdtd with the terminals exactly as they are in the JSON, and the analytic MTL with the PHYSICAL radius of the wires
+# (no fitted r_eff). The differences are the result; only gross-error bands are pass/fail.
+# Geometry (dx = 5 mm): two 0.5 mm wires, h = 35 mm above a PEC plane, s = 70 mm apart, L = 2 m (the grid and the wire cells
+# of c1/h35 plus a second wire), 1 V gaussian generator (sigma = 2.5 ns, t0 = 15 ns) in series with the aggressor near-end
+# terminal (= R_S), the same terminal on the other three ends, PML on x and y.
 #
 # This file only orchestrates; each step lives in its own module (same folder):
 #   c2_common.py         constants, PASS/WARN/FAIL log, file search, repository paths
 #   c2_input.py          static check of c2.fdtd.json + the .exc file; roles of wires and probes from positions
-#   c2_solver.py         run plan (steps/time as semba-fdtd computes them), run with live progress bar and ETA
-#                        (follows <case>_Report.txt), clean stop on interrupt, loading of the four probe currents
-#   c2_calibration.py    aggressor on the first pass: peaks, delay, Zc effective, probe sign
-#   c2_crosstalk.py      NE/FE voltages, peaks, polarity, transfer function, late-time ring-down
-#   c2_analytic.py       MTL reference (inductance matrix, exact in frequency) and the comparison checks
-#   c2_solver_report.py  Energy.dat / Report.txt checks
-#   c2_plots.py          4-panel figure
+#   c2_solver.py         run plan (MPI by default, steps/time as semba-fdtd computes them), run with live progress bar and
+#                        ETA (follows <case>_Report.txt), clean stop on interrupt, loading of the four probe currents
+#   c2_calibration.py    aggressor on the first pass: peaks, delay, Zc seen by the source, effective L' and C', charge
+#   c2_crosstalk.py      NE/FE voltages, peaks, polarity, transfer function, late-time ring-down (50 ohm case)
+#   c2_analytic.py       MTL reference (inductance matrix, exact in frequency) and its difference to semba-fdtd
+#   c2_solver_report.py  Energy.dat / Report.txt / Warnings.txt checks, absorbing borders listed in the Report
+#   c2_plots.py          two figures, two vertical panels each: c2_time.png (I, V) and c2_db.png (transfer function, ring-down)
 #
+# One copy of the code, one subfolder per case (each holds its c2.fdtd.json, the .exc file and the results of its runs):
+#   50ohm/   the real experiment: 50 ohm on the four ends, 300 ns window (the mismatch Zc ~ 300 ohm against 50 ohm rings ~150 ns)
+#   matched/ the same wires and grid with 296.29 ohm (Zc of the physical radius) on the four ends, ~40 ns window: no ring-down,
+#            so the coupling between the wires (l12) is seen without the mismatch
+# Boundaries are always PML. Choose the case with C2_CASE (subfolder name or a path; default 50ohm): C2_CASE=matched python c2.py
 # Usage (from anywhere, or cell by cell in VS Code):
-#   python c2.py            check the input, run semba-fdtd, analyse the result
+#   python c2.py            check the input, run semba-fdtd (live progress bar), analyse the result
 #   python c2.py --no-run   check the input and analyse the results of a run already made
-# Environment: SEMBA_EXE (path of semba-fdtd), REPO_ROOT (default: nearest parent folder with src_pyWrapper).
+# In the interactive window (VS Code / Jupyter): set os.environ["C2_NO_RUN"] = "1" before cell 1, or simply do not run
+# cell 2; `solver` stays None and the probes are read from the .dat files of the case folder.
+# Environment: SEMBA_EXE (path of semba-fdtd), REPO_ROOT (default: nearest parent folder with src_pyWrapper),
+# C2_NO_RUN=1 (same as --no-run), C2_MCELLS_PER_S (speed for the a-priori time estimate; else the last Report.txt).
+# MPI is the DEFAULT: C2_MPI_RANKS=8 (1 = serial run with the serial build), C2_MPI_DIR=x (never z with wires), MPIRUN
+# (default /usr/local/bin/mpirun if it exists), C2_MPI_FLAGS; SEMBA_EXE defaults to <repo>/build-mpi/bin/semba-fdtd when
+# ranks > 1. See mpi_settings in c2_solver.py. On a machine without the MPI build (e.g. the laptop) set C2_MPI_RANKS=1.
 import os
 import sys
 from pathlib import Path
@@ -35,50 +49,69 @@ from c2_calibration import calibrate
 from c2_common import Log, repo_paths
 from c2_crosstalk import crosstalk, late_time, transfer_function
 from c2_input import load_case
-from c2_plots import plot_case
+from c2_plots import plot_db, plot_time
 from c2_solver import load_currents, run_solver
-from c2_solver_report import energy_check, report_check
+from c2_solver_report import border_check, energy_check, report_check, warnings_check
 
 NO_RUN = "--no-run" in sys.argv or os.environ.get("C2_NO_RUN") == "1"
+solver = None        # stays None when cell 2 is skipped or --no-run: the probes are then read from the .dat files
 CASE = "c2.fdtd.json"
+CASE_NAME = os.environ.get("C2_CASE", "50ohm")        # subfolder of the code folder, or a path; set it before cell 1
+CASE_DIR = Path(CASE_NAME) if Path(CASE_NAME).is_absolute() else HERE / CASE_NAME
+if not (CASE_DIR / CASE).exists():
+    found = sorted(p.parent.name for p in HERE.glob("*/" + CASE))
+    raise SystemExit(f"{CASE_DIR / CASE} not found. Case folders next to the code: {found}. Set C2_CASE to one of them.")
+# MPI by default (ewing scalability tests, 2026-11-17: 8 ranks cutting in x was the fastest; -mpidir z fails with wires).
+# Every value can be overridden from the environment before cell 1; C2_MPI_RANKS=1 gives the serial run and the serial build.
+os.environ.setdefault("C2_MPI_RANKS", "8")
+os.environ.setdefault("C2_MPI_DIR", "x")
+if os.path.exists("/usr/local/bin/mpirun"):           # the mpirun of ewing, built with Slurm support
+    os.environ.setdefault("MPIRUN", "/usr/local/bin/mpirun")
 REPO, SEMBA_EXE, SPINIT_FOLDER = repo_paths(HERE)
+if "SEMBA_EXE" not in os.environ and os.environ["C2_MPI_RANKS"] != "1":
+    SEMBA_EXE = str(REPO / "build-mpi" / "bin" / "semba-fdtd")     # MPI build, next to build/ in the repository
 log = Log()
 
 # %% 1. Static check of the input file (no solver needed)
-case = load_case(HERE, CASE, log)
+case = load_case(CASE_DIR, CASE, log)
 
-# %% 2. Run semba-fdtd, unless --no-run. Prints the run plan, then a progress bar updated in place (about 6x the time
-# of case A: 300 ns instead of 50 ns; 3x slower on battery). Interrupt = clean stop; the solver reports every ~60 s.
-solver = None if NO_RUN else run_solver(case, REPO, SEMBA_EXE, SPINIT_FOLDER)
+# %% 2. Run semba-fdtd, unless --no-run. Prints the run plan, then a progress bar updated in place (50ohm: about 13 min
+# with 8 MPI ranks; matched: about 2 min). Interrupt = clean stop; the solver reports every ~60 s.
+# solver = None if NO_RUN else run_solver(case, REPO, SEMBA_EXE, SPINIT_FOLDER)
 
 # %% 3. Probe currents (positive along the polyline, near end -> far end): aggressor and victim, near and far
 t, I = load_currents(case, solver)
 
-# %% 4. Aggressor on the first pass of the pulse: peaks, delay, Zc effective, probe sign
+# %% 4. Aggressor on the first pass of the pulse: peaks, delay, Zc seen by the source, effective L' and C', charge
 cal = calibrate(case, t, I, log)
 
 # %% 5. Victim: NE and FE voltages, peaks and polarity
 xt = crosstalk(case, t, I, log)
 
-# %% 6. Transfer function in the band of the source, and the ring-down of the mismatched line
+# %% 6. Transfer function in the band of the source, and the ring-down of the mismatched line (50 ohm case)
 tf = transfer_function(case, t, xt)
 late_time(case, t, I, xt, log)
 
-# %% 7. Analytic reference: MTL of the wire pair, time and frequency domain
+# %% 7. Analytic reference (physical radius): MTL of the wire pair, time and frequency domain
 curves = compare_with_mtl(case, cal, xt, t, I, log)
 compare_transfer(case, tf, log)
 
 # %% 8. Optional: energy decay and solver messages
-energy_check(case.HERE, log)
+energy_check(case.HERE, log, min_db=50.0 if not case.matched else 30.0)   # matched: ~40 ns, only a few reports
+border_check(case.HERE, case.bnd_xy, log)
+warnings_check(case.HERE, log)
 report_check(case.HERE, case.dt_solver, log)
 
 # %% 9. Summary
-log.summary()
+log.summary(f"case B (c2), {case.name}")
 
-# %% 10. Save the results for the B -> C comparison (the closed cylinder should give about -10 %)
-np.savez(case.WORK / "c2_results.npz", t=t, V_NE=xt.V["NE"], V_FE=xt.V["FE"], **{f"I_{k}": v for k, v in I.items()})
+# %% 10. Save the results for the B -> C comparison (the closed cylinder should give about -10 %). Only the 50 ohm case
+# is case B of the tutorial, so only it writes the file that c3 looks for.
+out_npz = "c2_results_matched.npz" if case.matched else "c2_results.npz"
+np.savez(case.WORK / out_npz, t=t, V_NE=xt.V["NE"], V_FE=xt.V["FE"], **{f"I_{k}": v for k, v in I.items()})
 
 # %% 11. Plots
-plot_case(case, cal, xt, tf, curves, t, I, case.WORK / "c2.png")
+plot_time(case, cal, xt, curves, t, I, case.WORK / "c2_time.png")      # currents and voltages
+plot_db(case, tf, curves, t, I, case.WORK / "c2_db.png")                # transfer function and ring-down, in dB
 
 # %%
